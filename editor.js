@@ -963,8 +963,12 @@ export class ScheduleEditor {
             case 1:
                 return this.#iconSpecFromSvg(ICONS.noisePink);
             case 3:
-                return this.#iconSpecFromSvg(ICONS.noiseWhite);
+                return this.#iconSpecFromSvg(ICONS.isoPulse);
             case 4:
+                return this.#iconSpecFromSvg(ICONS.isoPulseAlt);
+            case 5:
+                return this.#iconSpecFromSvg(ICONS.noiseWhite);
+            case 6:
                 return this.#iconSpecFromSvg(ICONS.noiseBrown);
             case 2: {
                 const recorded = this.#buildRecordedOption(voice.file, voice.description?.trim());
