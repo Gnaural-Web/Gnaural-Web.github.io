@@ -21,10 +21,12 @@
                 <div class="menu-wrapper">
                     <button id="gearButton" class="icon-button" aria-label="Session tools">
                         <svg viewBox="0 0 24 24" role="img" aria-hidden="true">
-                            <path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0-6a1 1 0 0 1 .98.804l.38 2.012a7.96 7.96 0 0 1 1.948.806l1.84-1.067a1 1 0 0 1 1.24.17l1.414 1.414a1 1 0 0 1 .17 1.24l-1.067 1.84c.33.6.598 1.24.806 1.948l2.012.38a1 1 0 0 1 .804.98v2a1 1 0 0 1-.804.98l-2.012.38a7.96 7.96 0 0 1-.806 1.948l1.067 1.84a1 1 0 0 1-.17 1.24l-1.414 1.414a1 1 0 0 1-1.24.17l-1.84-1.067a7.96 7.96 0 0 1-1.948.806l-.38 2.012A1 1 0 0 1 12 24h-2a1 1 0 0 1-.98-.804l-.38-2.012a7.96 7.96 0 0 1-1.948-.806l-1.84 1.067a1 1 0 0 1-1.24-.17L2.198 19.86a1 1 0 0 1-.17-1.24l1.067-1.84a7.96 7.96 0 0 1-.806-1.948l-2.012-.38A1 1 0 0 1 .473 14v-2a1 1 0 0 1 .804-.98l2.012-.38a7.96 7.96 0 0 1 .806-1.948l-1.067-1.84a1 1 0 0 1 .17-1.24L4.612 4.198a1 1 0 0 1 1.24-.17l1.84 1.067a7.96 7.96 0 0 1 1.948-.806l.38-2.012A1 1 0 0 1 10 .473h2z"/>
+                            <path d="M4 6h16a1 1 0 0 0 0-2H4a1 1 0 0 0 0 2zm16 5H4a1 1 0 0 0 0 2h16a1 1 0 0 0 0-2zm0 7H4a1 1 0 0 0 0 2h16a1 1 0 0 0 0-2z"/>
                         </svg>
                     </button>
                     <div class="menu" id="gearMenu">
+                        <button data-action="new">New Gnaural File</button>
+                        <button data-action="edit">Edit Gnaural File</button>
                         <button data-action="standard">Open Standard Files</button>
                         <button data-action="import">Import File from Disk</button>
                     </div>
@@ -195,6 +197,55 @@
             <button id="cookieAccept" class="primary-button">Allow Cookies</button>
         </div>
     </div>
+    <div class="modal" id="scheduleEditorModal" aria-hidden="true">
+        <div class="modal-card editor-modal-card">
+            <div class="modal-header editor-header">
+                <div>
+                    <h2>Gnaural Schedule Editor</h2>
+                    <p class="editor-subtitle">Design immersive soundscapes with precision controls.</p>
+                </div>
+                <div class="editor-header-actions">
+                    <button class="secondary-button" id="editorCancel">Cancel</button>
+                    <button class="primary-button" id="editorApply">Save</button>
+                    <button class="primary-button ghost" id="editorDownload">Download XML</button>
+                </div>
+            </div>
+            <div class="modal-content editor-content">
+                <section class="editor-settings" aria-labelledby="editorSettingsHeading">
+                    <div class="editor-settings-grid">
+                        <label>
+                            Title
+                            <input type="text" id="editorTitle">
+                        </label>
+                        <label>
+                            Author
+                            <input type="text" id="editorAuthor">
+                        </label>
+                        <label>
+                            Description
+                            <textarea id="editorDescription" rows="2"></textarea>
+                        </label>
+                        <label>
+                            Loops
+                            <input type="number" id="editorLoops" min="1" value="1">
+                        </label>
+                        <label>
+                            Timeline Length (seconds)
+                            <input type="number" id="editorLength" min="20" value="600">
+                        </label>
+                    </div>
+                </section>
+                <section class="editor-voices" aria-labelledby="editorVoicesHeading">
+                    <div class="editor-voices-header">
+                        <h3 id="editorVoicesHeading">Voices</h3>
+                        <button class="secondary-button" id="editorAddVoice">Add Voice</button>
+                    </div>
+                    <div class="voice-list" id="editorVoiceList"></div>
+                </section>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -1,3 +1,5 @@
+import { ScheduleEditor } from './editor.js';
+
 const TWO_PI = Math.PI * 2;
 const DEFAULT_VOLUME = 70;
 const RENDER_CONFIG = {
@@ -57,6 +59,17 @@ class PinkNoiseGenerator {
     }
 }
 
+class WhiteNoiseGenerator {
+    constructor(seed = Date.now() & 0xffffffff) {
+        this.seed = seed >>> 0 || 1;
+    }
+
+    next() {
+        this.seed = (1664525 * this.seed + 1013904223) >>> 0;
+        return (this.seed / 0xffffffff) * 2 - 1;
+    }
+}
+
 class GnauralEngine {
     constructor({ sampleRate = 44100 } = {}) {
         this.sampleRate = sampleRate;
@@ -91,7 +104,8 @@ class GnauralEngine {
 
         const voiceNodes = [...doc.querySelectorAll('schedule > voice')];
         const voices = voiceNodes.map((node, index) => this.#parseVoice(node, index));
-        const totalDurationSeconds = voices.reduce((max, voice) => Math.max(max, voice.totalDurationSeconds), 0) || 1;
+        const computedDuration = voices.reduce((max, voice) => Math.max(max, voice.totalDurationSeconds), 0);
+        const totalDurationSeconds = Math.max(metadata.totalTime || 0, computedDuration, 1);
 
         return {
             metadata,
@@ -146,6 +160,7 @@ class GnauralEngine {
         const mute = text('voice_mute', '0') === '1';
         const mono = text('voice_mono', '0') === '1';
         const description = text('description', `Voice ${index + 1}`);
+        const file = text('voice_file', '');
         const entries = [...node.querySelectorAll('entries > entry')].map((entryNode) => this.#parseEntry(entryNode));
         const usableEntries = entries.filter((entry) => entry.duration > 0);
 
@@ -161,6 +176,7 @@ class GnauralEngine {
             type,
             description,
             mono,
+            file,
             enabled: !mute && usableEntries.length > 0,
             entries: usableEntries,
             totalDurationSeconds: offsetSeconds
@@ -235,8 +251,7 @@ class GnauralEngine {
                 const progressEnd = entry.duration > 0 ? (segmentEnd - entryStart) / entry.duration : 0;
 
                 this.#mixEntrySegment(
-                    voice.type,
-                    voice.mono,
+                    voice,
                     entry,
                     startSample,
                     sampleCount,
@@ -250,13 +265,19 @@ class GnauralEngine {
         }
     }
 
-    #mixEntrySegment(type, mono, entry, startSample, sampleCount, progressStart, progressEnd, state, left, right) {
-        switch (type) {
+    #mixEntrySegment(voice, entry, startSample, sampleCount, progressStart, progressEnd, state, left, right) {
+        switch (voice.type) {
             case 0:
-                this.#mixBinaural(entry, mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                this.#mixBinaural(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
                 break;
             case 1:
-                this.#mixPinkNoise(entry, mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                this.#mixPinkNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                break;
+            case 2:
+                this.#mixSampleVoice(voice, entry, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                break;
+            case 3:
+                this.#mixWhiteNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
                 break;
             default:
                 break;
@@ -317,6 +338,78 @@ class GnauralEngine {
         }
     }
 
+    #mixWhiteNoise(entry, mono, startSample, sampleCount, progressStart, progressEnd, left, right, state) {
+        if (!state.white) {
+            state.white = new WhiteNoiseGenerator();
+        }
+        const chunkLength = left.length;
+        const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
+        let progress = progressStart;
+        for (let i = 0; i < sampleCount; i += 1) {
+            const clamped = clamp(progress, 0, 1);
+            const volL = entry.volLStart + entry.volLSpread * clamped;
+            const volR = entry.volRStart + entry.volRSpread * clamped;
+            const sampleIndex = startSample + i;
+            if (sampleIndex >= chunkLength) break;
+            const sampleValue = state.white.next();
+            if (mono) {
+                const gain = 0.5 * (volL + volR);
+                left[sampleIndex] += sampleValue * gain;
+                right[sampleIndex] += sampleValue * gain;
+            } else {
+                left[sampleIndex] += sampleValue * volL;
+                right[sampleIndex] += state.white.next() * volR;
+            }
+            progress += progressDelta;
+        }
+    }
+
+    #mixSampleVoice(voice, entry, startSample, sampleCount, progressStart, progressEnd, left, right, state) {
+        const buffer = voice.sampleBuffer;
+        if (!buffer || !buffer.length) return;
+        if (typeof state.samplePosition !== 'number') {
+            state.samplePosition = 0;
+        }
+        const sampleLeft = buffer.left;
+        const sampleRight = buffer.right || buffer.left;
+        const sampleLength = buffer.length;
+        const rateRatio = buffer.sampleRate > 0 ? buffer.sampleRate / this.sampleRate : 1;
+        if (!sampleLeft || sampleLength <= 0 || rateRatio <= 0) return;
+        const chunkLength = left.length;
+        const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
+        let progress = progressStart;
+        let position = state.samplePosition || 0;
+        for (let i = 0; i < sampleCount; i += 1) {
+            const sampleIndex = startSample + i;
+            if (sampleIndex >= chunkLength) break;
+            const clamped = clamp(progress, 0, 1);
+            const volL = entry.volLStart + entry.volLSpread * clamped;
+            const volR = entry.volRStart + entry.volRSpread * clamped;
+            const baseIndex = Math.floor(position) % sampleLength;
+            const nextIndex = (baseIndex + 1) % sampleLength;
+            const frac = position - Math.floor(position);
+            const sampleValueL = sampleLeft[baseIndex] + (sampleLeft[nextIndex] - sampleLeft[baseIndex]) * frac;
+            const sampleValueR = sampleRight[nextIndex] !== undefined
+                ? sampleRight[baseIndex] + (sampleRight[nextIndex] - sampleRight[baseIndex]) * frac
+                : sampleValueL;
+            if (voice.mono || sampleRight === sampleLeft) {
+                const monoSample = (sampleValueL + sampleValueR) * 0.5;
+                const gain = 0.5 * (volL + volR);
+                left[sampleIndex] += monoSample * gain;
+                right[sampleIndex] += monoSample * gain;
+            } else {
+                left[sampleIndex] += sampleValueL * volL;
+                right[sampleIndex] += sampleValueR * volR;
+            }
+            progress += progressDelta;
+            position += rateRatio;
+            if (position >= sampleLength) {
+                position %= sampleLength;
+            }
+        }
+        state.samplePosition = position;
+    }
+
     #normalizeChunk(left, right) {
         let peak = 0;
         for (let i = 0; i < left.length; i += 1) {
@@ -343,7 +436,9 @@ class ScheduleStream {
         this.voiceStates = schedule.voices.map((voice, index) => ({
             phaseL: 0,
             phaseR: 0,
-            noise: voice.type === 1 ? new PinkNoiseGenerator(seedBase + index * 7919) : null
+            noise: voice.type === 1 ? new PinkNoiseGenerator(seedBase + index * 7919) : null,
+            white: voice.type === 3 ? new WhiteNoiseGenerator(seedBase + index * 3571) : null,
+            samplePosition: voice.type === 2 ? 0 : 0
         }));
     }
 
@@ -463,6 +558,8 @@ class WaterfallRenderer {
 class GnauralApp {
     constructor() {
         this.engine = new GnauralEngine();
+        this.sampleCache = new Map();
+        this.decodeContext = null;
         this.state = {
             schedule: null,
             renderStream: null,
@@ -494,6 +591,7 @@ class GnauralApp {
             document.removeEventListener('pointerup', this.timelinePointerUpHandler);
         };
         this.ui = this.#bindUI();
+        this.editor = new ScheduleEditor({ app: this, soundLibrary: SOUND_LIBRARY });
         this.#setTimelineSliderEnabled(false);
         this.preferences = this.#loadPreferences();
         this.standardFiles = [];
@@ -628,6 +726,7 @@ class GnauralApp {
         const nextMinuteMark = Math.floor(this.state.playheadSeconds / 60) * 60 + 60;
         this.state.nextMinuteRenderMark = nextMinuteMark;
         this.state.totalSeconds = schedule.totalDurationSeconds * schedule.loops;
+        await this.#ensureSampleBuffers(schedule);
         this.state.renderStream = this.engine.createStream(schedule, 0);
         const initialTargetSeconds = Math.min(this.state.totalSeconds, RENDER_CONFIG.initialMinutes * 60);
         if (initialTargetSeconds > 0) {
@@ -1053,6 +1152,16 @@ class GnauralApp {
             case 'import':
                 this.ui.fileInput?.click();
                 break;
+            case 'new':
+                this.editor?.open(this.createBlankScheduleData(), { mode: 'new' });
+                break;
+            case 'edit': {
+                const data = this.state.schedule
+                    ? this.cloneScheduleData(this.state.schedule)
+                    : this.createBlankScheduleData();
+                this.editor?.open(data, { mode: 'edit' });
+                break;
+            }
             default:
         }
     }
@@ -1309,6 +1418,11 @@ class GnauralApp {
             },
             overallVolumeLeft: schedule.overallVolumeLeft ?? 1,
             overallVolumeRight: schedule.overallVolumeRight ?? 1,
+            totalDurationSeconds: schedule.totalDurationSeconds ||
+                (schedule.voices || []).reduce((max, voice) => {
+                    const sum = (voice.entries || []).reduce((acc, entry) => acc + Number(entry.duration || 0), 0);
+                    return Math.max(max, sum);
+                }, 0),
             voices: (schedule.voices || []).map((voice) => {
                 const desc = voice.description || '';
                 const looksLikeFile = desc.endsWith('.ogg') || desc.endsWith('.wav');
@@ -1332,6 +1446,84 @@ class GnauralApp {
         const xml = scheduleToXml(data);
         await this.#loadScheduleText(xml, data.metadata?.title || 'Edited Schedule');
         this.#setStatus('Schedule updated');
+    }
+
+    generateScheduleXml(data) {
+        return scheduleToXml(data);
+    }
+
+    async #ensureSampleBuffers(schedule) {
+        const voices = schedule.voices || [];
+        if (!voices.length) return;
+        const loadTasks = voices
+            .filter((voice) => Number(voice.type) === 2 && voice.file)
+            .map(async (voice) => {
+                try {
+                    voice.sampleBuffer = await this.#loadSampleBuffer(voice.file);
+                } catch (error) {
+                    console.warn('Failed to load sample', voice.file, error);
+                    voice.sampleBuffer = null;
+                }
+            });
+        if (loadTasks.length) {
+            await Promise.all(loadTasks);
+        }
+    }
+
+    async #loadSampleBuffer(path) {
+        if (!path) return null;
+        if (this.sampleCache.has(path)) {
+            return this.sampleCache.get(path);
+        }
+        const response = await fetch(path);
+        if (!response.ok) {
+            throw new Error(`Unable to load sample: ${path}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const context = await this.#getDecodeContext();
+        let audioBuffer;
+        if (context.decodeAudioData.length === 1) {
+            audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+        } else {
+            audioBuffer = await new Promise((resolve, reject) => {
+                context.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
+            });
+        }
+        const left = new Float32Array(audioBuffer.length);
+        if (typeof audioBuffer.copyFromChannel === 'function') {
+            audioBuffer.copyFromChannel(left, 0);
+        } else {
+            left.set(audioBuffer.getChannelData(0));
+        }
+        let right = null;
+        if (audioBuffer.numberOfChannels > 1) {
+            right = new Float32Array(audioBuffer.length);
+            if (typeof audioBuffer.copyFromChannel === 'function') {
+                audioBuffer.copyFromChannel(right, 1);
+            } else {
+                right.set(audioBuffer.getChannelData(1));
+            }
+        }
+        const data = {
+            left,
+            right,
+            length: audioBuffer.length,
+            sampleRate: audioBuffer.sampleRate
+        };
+        this.sampleCache.set(path, data);
+        return data;
+    }
+
+    async #getDecodeContext() {
+        if (this.decodeContext) return this.decodeContext;
+        const OfflineContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+        if (OfflineContext) {
+            this.decodeContext = new OfflineContext(2, 44100, 44100);
+            return this.decodeContext;
+        }
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        this.decodeContext = new AudioCtx({ latencyHint: 'playback' });
+        return this.decodeContext;
     }
 }
 
@@ -1369,10 +1561,11 @@ const formatBalance = (value) => {
 const scheduleToXml = (data) => {
     const metadata = data.metadata || {};
     const voices = data.voices || [];
-    const totalDuration = voices.reduce((max, voice) => {
+    const voiceDuration = voices.reduce((max, voice) => {
         const sum = (voice.entries || []).reduce((acc, entry) => acc + Number(entry.duration || 0), 0);
         return Math.max(max, sum);
     }, 0);
+    const totalDuration = Math.max(voiceDuration, Number(data.totalDurationSeconds || 0));
     const voiceXml = voices
         .map((voice, index) => {
             const descriptionText =

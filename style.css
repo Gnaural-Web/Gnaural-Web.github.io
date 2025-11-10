@@ -938,3 +938,286 @@ input[type="range"]::-moz-range-thumb {
 .data-points-list div {
     padding: 0.25rem 0;
 }
+
+.editor-modal-card {
+    width: min(1100px, 95vw);
+    max-height: min(90vh, 960px);
+    background: linear-gradient(165deg, rgba(7, 13, 28, 0.92), rgba(5, 9, 20, 0.96));
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.editor-header {
+    align-items: flex-start;
+    gap: 1.5rem;
+}
+
+.editor-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+
+.editor-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+}
+
+.editor-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.editor-header-actions .ghost {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: var(--accent);
+}
+
+.editor-content {
+    overflow: auto;
+    padding-top: 0;
+}
+
+.editor-settings {
+    background: rgba(12, 20, 41, 0.7);
+    border-radius: 1rem;
+    padding: 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.editor-settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.editor-settings label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.editor-settings input,
+.editor-settings textarea {
+    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text);
+    padding: 0.6rem 0.8rem;
+    font-size: 0.95rem;
+    resize: vertical;
+}
+
+.editor-voices {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.editor-voices-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.voice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.voice-card {
+    background: rgba(7, 12, 25, 0.82);
+    border-radius: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.voice-card-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.voice-type-selector {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.voice-type-button {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.04);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.voice-type-button:hover,
+.voice-type-button:focus-visible {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.voice-type-menu {
+    position: absolute;
+    inset: auto auto 0 0;
+    transform: translateY(calc(100% + 0.5rem));
+    background: rgba(9, 14, 28, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    padding: 0.5rem 0;
+    display: none;
+    min-width: 220px;
+    z-index: 10;
+}
+
+.voice-type-menu.open {
+    display: block;
+}
+
+.voice-type-option {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 1rem;
+    color: var(--text);
+    text-align: left;
+    background: transparent;
+    border: 0;
+    width: 100%;
+    cursor: pointer;
+    font-size: 0.95rem;
+}
+
+.voice-type-option:hover,
+.voice-type-option:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.voice-type-option svg {
+    width: 24px;
+    height: 24px;
+}
+
+.voice-card-title {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.voice-card-title input {
+    background: transparent;
+    border: 0;
+    font-size: 1.1rem;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.voice-type-label {
+    font-size: 0.8rem;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.voice-card-body {
+    display: grid;
+    gap: 1.25rem;
+}
+
+.voice-chart {
+    width: 100%;
+    height: 220px;
+}
+
+.voice-entries {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.entry-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.75rem;
+    align-items: end;
+}
+
+.entry-row label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.entry-row input,
+.entry-row select {
+    border-radius: 0.65rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text);
+    padding: 0.55rem 0.7rem;
+    font-size: 0.9rem;
+}
+
+.entry-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.editor-empty-state {
+    text-align: center;
+    color: var(--muted);
+    padding: 2rem;
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 1rem;
+}
+
+.timeline-hover-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg, rgba(143, 203, 255, 0.8), rgba(255, 255, 255, 0));
+    pointer-events: none;
+}
+
+.voice-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.voice-card-footer button {
+    min-width: 0;
+}
+
+.voice-card-footer button svg {
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.35rem;
+}
