@@ -1,5 +1,200 @@
-<!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>Hello</title></head>
-  <body><h1>It works!</h1></body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gnaural Web Studio</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="waterfall" aria-hidden="true"></canvas>
+    <div class="app-shell">
+        <header class="app-header">
+            <div class="brand">
+                <span class="logo-dot" aria-hidden="true"></span>
+                <div class="brand-copy">
+                    <p class="eyebrow">Binaural Engine</p>
+                    <h1>Gnaural Web Studio</h1>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div class="menu-wrapper">
+                    <button id="gearButton" class="icon-button" aria-label="Session tools">
+                        <svg viewBox="0 0 24 24" role="img" aria-hidden="true">
+                            <path d="M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zm0-6a1 1 0 0 1 .98.804l.38 2.012a7.96 7.96 0 0 1 1.948.806l1.84-1.067a1 1 0 0 1 1.24.17l1.414 1.414a1 1 0 0 1 .17 1.24l-1.067 1.84c.33.6.598 1.24.806 1.948l2.012.38a1 1 0 0 1 .804.98v2a1 1 0 0 1-.804.98l-2.012.38a7.96 7.96 0 0 1-.806 1.948l1.067 1.84a1 1 0 0 1-.17 1.24l-1.414 1.414a1 1 0 0 1-1.24.17l-1.84-1.067a7.96 7.96 0 0 1-1.948.806l-.38 2.012A1 1 0 0 1 12 24h-2a1 1 0 0 1-.98-.804l-.38-2.012a7.96 7.96 0 0 1-1.948-.806l-1.84 1.067a1 1 0 0 1-1.24-.17L2.198 19.86a1 1 0 0 1-.17-1.24l1.067-1.84a7.96 7.96 0 0 1-.806-1.948l-2.012-.38A1 1 0 0 1 .473 14v-2a1 1 0 0 1 .804-.98l2.012-.38a7.96 7.96 0 0 1 .806-1.948l-1.067-1.84a1 1 0 0 1 .17-1.24L4.612 4.198a1 1 0 0 1 1.24-.17l1.84 1.067a7.96 7.96 0 0 1 1.948-.806l.38-2.012A1 1 0 0 1 10 .473h2z"/>
+                        </svg>
+                    </button>
+                    <div class="menu" id="gearMenu">
+                        <button data-action="standard">Open Standard Files</button>
+                        <button data-action="import">Import File from Disk</button>
+                    </div>
+                </div>
+                <input type="file" id="fileInput" accept=".gnaural,.xml" hidden>
+            </div>
+        </header>
+        <main class="content">
+            <section class="control-card">
+                <div class="status-line" id="statusLine">Initializing engine…</div>
+                <div class="primary-controls">
+                    <button id="playButton" class="primary-button">Play</button>
+                    <div class="inline-text">Click the gear to load your own .gnaural file</div>
+                </div>
+                <div class="slider-group">
+                    <label for="volumeSlider">Volume <span id="volumeValue">70%</span></label>
+                    <input type="range" id="volumeSlider" min="0" max="100" value="70">
+                </div>
+                <div class="slider-group">
+                    <label for="balanceSlider">Balance <span id="balanceValue">Center</span></label>
+                    <input type="range" id="balanceSlider" min="-1" max="1" step="0.01" value="0">
+                </div>
+                <div class="slider-group timeline-group">
+                    <label for="timelineSlider">Timeline <span id="timelineValue">0:00</span></label>
+                    <input type="range" id="timelineSlider" class="timeline-slider" min="0" max="100" step="0.01" value="0" disabled>
+                </div>
+                <div class="info-grid">
+                    <div>
+                        <span class="label">Schedule</span>
+                        <p id="scheduleTitle">Default</p>
+                    </div>
+                    <div>
+                        <span class="label">Author</span>
+                        <p id="scheduleAuthor">—</p>
+                    </div>
+                    <div>
+                        <span class="label">Duration</span>
+                        <p id="scheduleDuration">—</p>
+                    </div>
+                    <div>
+                        <span class="label">Voices</span>
+                        <p id="voiceCount">—</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+        <footer class="footer">
+            <button class="footer-button" data-modal="aboutModal">About</button>
+            <button class="footer-button" data-modal="copyrightModal">Copyright</button>
+            <button class="footer-button" data-modal="licenseModal">License</button>
+        </footer>
+    </div>
+    <div class="modal" id="plotEditorModal" aria-hidden="true">
+        <div class="modal-card editor-card">
+            <div class="modal-header">
+                <h2>Advanced Plot Editor</h2>
+                <div class="modal-actions">
+                    <label class="param-select">
+                        Parameter
+                        <select id="plotEditorParam">
+                            <option value="basefreq">Base Frequency</option>
+                            <option value="beatfreq">Beat Frequency</option>
+                            <option value="volL">Volume Left</option>
+                            <option value="volR">Volume Right</option>
+                        </select>
+                    </label>
+                    <button class="secondary-button" id="plotEditorClose">Close</button>
+                    <button class="primary-button" id="plotEditorApply">Apply Changes</button>
+                </div>
+            </div>
+            <div class="modal-content">
+                <canvas id="plotEditorCanvas" class="plot-editor-canvas" width="960" height="520"></canvas>
+                <p class="modal-note">
+                    Scroll to zoom, drag background to pan, drag points to edit. Double-click to insert points. Right-click selected points to remove.
+                </p>
+            </div>
+        </div>
+    </div>
+    <div id="loadingOverlay" class="loading-overlay hidden" role="status" aria-live="polite">
+        <div class="loading-card">
+            <p class="loading-label">Preparing audio…</p>
+            <div class="progress-track">
+                <div class="progress-bar" id="loadingProgress"></div>
+            </div>
+            <p class="loading-detail" id="loadingDetail">0 / 0 min cached</p>
+        </div>
+    </div>
+    <div class="modal" id="aboutModal" aria-hidden="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>About Gnaural Web</h2>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-content">
+                <p>Gnaural Web Studio reimagines Bret Logan's classic Gnaural binaural beat engine in modern HTML5. It renders schedules directly in the browser using the Web Audio API, adds responsive UI controls, and keeps compatibility with existing .gnaural files.</p>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="copyrightModal" aria-hidden="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>Copyright / License</h2>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-content">
+                <p>This project is distributed under the GPL-3.0 License.</p>
+                <p>The full GPL-3 text is reproduced below for convenience.</p>
+                <iframe src="gpl-3.0.txt" title="GPL-3 License" style="width:100%; height:300px; border:1px solid var(--panel-border); border-radius:0.75rem;"></iframe>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="licenseModal" aria-hidden="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>Upstream Licenses / Credits</h2>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-content">
+                <p><strong>Gnaural:</strong> GPL-2, Bret Logan, <a href="https://sourceforge.net/projects/gnaural/" target="_blank" rel="noopener noreferrer">sourceforge.net/projects/gnaural</a></p>
+                <p><strong>Blanket:</strong> GPL-3, Rafael Mardojai, <a href="https://github.com/rafaelmardojai/blanket" target="_blank" rel="noopener noreferrer">github.com/rafaelmardojai/blanket</a></p>
+                <h3>Sounds</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Sound</th>
+                            <th>Author</th>
+                            <th>Editor*</th>
+                            <th>License</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><a href="https://freesound.org/people/kvgarlic/sounds/156826/" target="_blank">Birds</a></td><td>kvgarlic</td><td>Porrumentzio</td><td>CC0</td></tr>
+                        <tr><td><a href="https://freesound.org/people/Falcet/sounds/439365/" target="_blank">Boat</a></td><td>Falcet</td><td>Porrumentzio</td><td>CC0</td></tr>
+                        <tr><td><a href="https://freesound.org/people/gezortenplotz/sounds/44796/" target="_blank">City</a></td><td>gezortenplotz</td><td>Porrumentzio</td><td>CC BY</td></tr>
+                        <tr><td><a href="https://soundbible.com/1664-Restaurant-Ambiance.html" target="_blank">Coffee Shop</a></td><td>stephan</td><td>-</td><td>Public Domain</td></tr>
+                        <tr><td><a href="https://soundbible.com/1543-Fireplace.html" target="_blank">Fireplace</a></td><td>ezwa</td><td>-</td><td>Public Domain</td></tr>
+                        <tr><td><a href="https://freesound.org/people/alex36917/sounds/524605/" target="_blank">Rain</a></td><td>alex36917</td><td>Porrumentzio</td><td>CC BY</td></tr>
+                        <tr><td><a href="https://soundbible.com/2083-Crickets-Chirping-At-Night.html" target="_blank">Summer night</a></td><td>Lisa Redfern</td><td>-</td><td>Public Domain</td></tr>
+                        <tr><td><a href="https://freesound.org/people/digifishmusic/sounds/41739/" target="_blank">Storm</a></td><td>Digifish music</td><td>Porrumentzio</td><td>CC BY</td></tr>
+                        <tr><td><a href="https://freesound.org/people/gluckose/sounds/333987/" target="_blank">Stream</a></td><td>gluckose</td><td>-</td><td>CC0</td></tr>
+                        <tr><td><a href="https://freesound.org/people/SDLx/sounds/259988/" target="_blank">Train</a></td><td>SDLx</td><td>-</td><td>CC BY 3.0</td></tr>
+                        <tr><td><a href="https://freesound.org/people/Luftrum/sounds/48412/" target="_blank">Waves</a></td><td>Luftrum</td><td>Porrumentzio</td><td>CC BY</td></tr>
+                        <tr><td><a href="https://freesound.org/people/felix.blume/sounds/217506/" target="_blank">Wind</a></td><td>felix.blume</td><td>Porrumentzio</td><td>CC0</td></tr>
+                    </tbody>
+                </table>
+                <p style="margin-top:0.5rem;">*Editor column refers to the Blanket project curators who trimmed/processed the original recordings.</p>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="standardFilesModal" aria-hidden="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>Open Standard Schedule</h2>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-content" id="standardFilesList">
+                <p>Loading standard files…</p>
+            </div>
+        </div>
+    </div>
+    <div class="cookie-banner hidden" id="cookieBanner">
+        <div>
+            <strong>Cookies & Preferences</strong>
+            <p>Allow cookies so we can remember your schedules, playback position, and volume settings.</p>
+        </div>
+        <div class="cookie-actions">
+            <button id="cookieDecline" class="secondary-button">Decline</button>
+            <button id="cookieAccept" class="primary-button">Allow Cookies</button>
+        </div>
+    </div>
+    <script type="module" src="app.js"></script>
+</body>
 </html>
