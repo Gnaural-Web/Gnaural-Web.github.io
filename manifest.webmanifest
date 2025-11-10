@@ -1,0 +1,25 @@
+{
+  "name": "Gnaural Web Studio",
+  "short_name": "Gnaural",
+  "description": "Design, edit, and play binaural beat schedules.",
+  "lang": "en",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e0c1d",
+  "theme_color": "#6c5ce7",
+  "categories": ["music", "productivity", "relaxation"],
+  "icons": [
+    {
+      "src": "icons/gnaural-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/gnaural-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
