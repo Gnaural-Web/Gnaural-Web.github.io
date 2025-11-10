@@ -19,7 +19,8 @@ const ICONS = {
     noiseBrown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#c08457" d="M4 18c2.4-3.8 4.8-5.7 8-5.7s5.6 1.9 8 5.7l-2 1.4c-1.8-2.8-3.4-3.9-6-3.9s-4.3 1.2-6 3.9z"/><path fill="#8b5e34" d="M4 10c2.4 3.8 4.8 5.7 8 5.7s5.6-1.9 8-5.7l-2-1.4c-1.8 2.8-3.4 3.9-6 3.9s-4.3-1.2-6-3.9z"/><path fill="#5f3b1f" d="M4 4c2.4 3.2 4.8 4.8 8 4.8s5.6-1.6 8-4.8L18 3c-1.8 2-3.4 3-6 3s-4.3-1-6-3z"/></svg>',
     sample: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm8 1.5V9h3.5z"/></svg>',
     remove: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h10l-1 15H8z"/><path fill="currentColor" d="M5 5h14v2H5z"/><path fill="currentColor" d="M9 2h6v2H9z"/></svg>',
-    add: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>'
+    add: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>',
+    preview: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'
 };
 
 const formatSeconds = (seconds) => {
@@ -389,6 +390,22 @@ export class ScheduleEditor {
 
         const footer = document.createElement('div');
         footer.className = 'voice-card-footer';
+        const previewButton = document.createElement('button');
+        previewButton.type = 'button';
+        previewButton.className = 'secondary-button';
+        previewButton.innerHTML = `${ICONS.preview}<span>Preview Voice</span>`;
+        previewButton.addEventListener('click', async () => {
+            if (previewButton.disabled) return;
+            previewButton.disabled = true;
+            try {
+                await this.#previewVoice(index);
+            } catch (error) {
+                console.error('Voice preview failed', error);
+            } finally {
+                previewButton.disabled = false;
+            }
+        });
+        footer.appendChild(previewButton);
         const addPoint = document.createElement('button');
         addPoint.type = 'button';
         addPoint.className = 'secondary-button';
@@ -711,17 +728,12 @@ export class ScheduleEditor {
         voice.type = option.type;
         if (option.type === 2) {
             voice.file = option.file;
-            voice.description = option.label;
-        } else {
+            if (!voice.description) {
+                voice.description = option.label;
+            }
+        } else if (voice.file) {
             voice.file = '';
         }
-        if (option.type !== 0) {
-            (voice.entries || []).forEach((entry) => {
-                entry.basefreq = entry.basefreq ?? 0;
-                entry.beatfreq = entry.beatfreq ?? 0;
-            });
-        }
-        ensureEntries(voice);
         this.#renderVoices();
     }
 
@@ -763,6 +775,18 @@ export class ScheduleEditor {
         if (!this.currentData?.voices) return;
         this.currentData.voices.splice(index, 1);
         this.#renderVoices();
+    }
+
+    async #previewVoice(index) {
+        if (!this.currentData?.voices?.[index] || !this.app?.previewVoice) return;
+        this.#syncMetadataFromInputs();
+        const exportData = this.#buildExportData();
+        if (!exportData) return;
+        try {
+            await this.app.previewVoice(index, exportData);
+        } catch (error) {
+            console.error('Preview playback failed', error);
+        }
     }
 
     #addEntry(index) {

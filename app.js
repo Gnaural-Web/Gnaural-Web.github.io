@@ -721,7 +721,8 @@ class GnauralApp {
             activeSources: [],
             bufferMonitorId: null,
             nextMinuteRenderMark: 60,
-            timelineScrubbing: false
+            timelineScrubbing: false,
+            previewSource: null
         };
         this.timelinePointerUpHandler = () => {
             this.state.timelineScrubbing = false;
@@ -838,6 +839,7 @@ class GnauralApp {
     async #loadScheduleText(xmlText, sourceLabel, options = {}) {
         const { fromPersistence = false, resumePosition = 0 } = options;
         try {
+            this.#stopPreview();
             const schedule = this.engine.parseXml(xmlText);
             schedule.metadata.source = sourceLabel;
             this.state.schedule = schedule;
@@ -957,6 +959,7 @@ class GnauralApp {
     }
 
     async #startPlayback() {
+        this.#stopPreview();
         if (this.state.bufferTimeline.length === 0) {
             await this.#queueRender(Math.min(this.state.totalSeconds, RENDER_CONFIG.chunkMinutes * 60));
             if (this.state.bufferTimeline.length === 0) {
@@ -1061,6 +1064,7 @@ class GnauralApp {
         if (this.state.audioCtx) {
             this.#unscheduleAllSources();
         }
+        this.#stopPreview();
         this.state.isPlaying = false;
         this.state.playheadSeconds = 0;
         if (!silent) {
@@ -1083,6 +1087,42 @@ class GnauralApp {
         });
         this.state.activeSources = [];
         this.state.audioCtxTailTime = this.state.audioCtx ? this.state.audioCtx.currentTime : 0;
+    }
+
+    #stopPreview() {
+        const preview = this.state.previewSource;
+        if (!preview) return;
+        try {
+            preview.source.onended = null;
+        } catch (e) {
+            // ignore
+        }
+        try {
+            preview.source.stop();
+        } catch (e) {
+            // ignore
+        }
+        try {
+            preview.source.disconnect();
+        } catch (e) {
+            // ignore
+        }
+        this.state.previewSource = null;
+    }
+
+    #handlePreviewEnded() {
+        const preview = this.state.previewSource;
+        if (!preview) return;
+        const label = preview.label;
+        try {
+            preview.source.disconnect();
+        } catch (e) {
+            // ignore
+        }
+        this.state.previewSource = null;
+        if (!this.state.isPlaying) {
+            this.#setStatus(label ? `Preview finished: ${label}` : 'Preview finished');
+        }
     }
 
     #handleSegmentEnded(node) {
@@ -1577,6 +1617,81 @@ class GnauralApp {
                 };
             })
         };
+    }
+
+    async previewVoice(voiceIndex, exportData) {
+        const voice = exportData?.voices?.[voiceIndex];
+        if (!voice) {
+            this.#setStatus('Preview unavailable (voice missing)');
+            return;
+        }
+        if (Number(voice.type) === 2 && !voice.file) {
+            this.#setStatus('Preview unavailable (sample missing)');
+            return;
+        }
+        const label = voice.description?.trim() || `Voice ${voiceIndex + 1}`;
+        try {
+            this.#setStatus(`Preparing preview: ${label}`);
+            await this.#ensureAudioGraph();
+            if (this.state.audioCtx?.state === 'suspended') {
+                await this.state.audioCtx.resume();
+            }
+            if (this.state.isPlaying) {
+                this.#pausePlayback();
+            }
+            this.#stopPreview();
+
+            const voiceClone = JSON.parse(JSON.stringify(voice));
+            const metadata = { ...(exportData.metadata || {}) };
+            metadata.loops = 1;
+            if (!metadata.title) {
+                metadata.title = `Preview • ${label}`;
+            }
+            const voiceDuration = (voiceClone.entries || []).reduce((sum, entry) => {
+                const duration = Number(entry?.duration) || 0;
+                return sum + Math.max(0, duration);
+            }, 0);
+            const previewData = {
+                metadata,
+                voices: [voiceClone],
+                overallVolumeLeft: exportData.overallVolumeLeft ?? 1,
+                overallVolumeRight: exportData.overallVolumeRight ?? 1,
+                totalDurationSeconds: Math.max(1, voiceDuration || 0)
+            };
+            const xml = scheduleToXml(previewData);
+            const schedule = this.engine.parseXml(xml);
+            await this.#ensureSampleBuffers(schedule);
+            const stream = this.engine.createStream(schedule, 0);
+            const totalSeconds = schedule.totalDurationSeconds * schedule.loops;
+            if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+                this.#setStatus('Preview unavailable (empty voice)');
+                return;
+            }
+            const segment = this.engine.renderRange(schedule, 0, totalSeconds, stream.voiceStates);
+            if (!segment) {
+                this.#setStatus('Preview unavailable (render error)');
+                return;
+            }
+            const ctx = this.state.audioCtx;
+            if (!ctx || !this.state.masterGain) {
+                this.#setStatus('Preview unavailable (audio engine)');
+                return;
+            }
+            const buffer = ctx.createBuffer(2, segment.left.length, this.engine.sampleRate);
+            buffer.copyToChannel(segment.left, 0, 0);
+            buffer.copyToChannel(segment.right, 1, 0);
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(this.state.masterGain);
+            source.onended = () => this.#handlePreviewEnded();
+            source.start();
+            this.state.previewSource = { source, label };
+            this.#setStatus(`Previewing ${label}`);
+        } catch (error) {
+            console.error('Voice preview failed', error);
+            this.#stopPreview();
+            this.#setStatus('Preview failed');
+        }
     }
 
     async applyEditedSchedule(data) {
