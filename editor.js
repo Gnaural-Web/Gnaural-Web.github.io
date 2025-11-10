@@ -92,10 +92,10 @@ const FIELD_CONFIGS = {
         symbol: 'diamond',
         supportedTypes: new Set([0]),
         min: 0,
-        max: 25,
+        max: Number.POSITIVE_INFINITY,
         toChart: (value) => value,
-        fromChart: (value) => clampValue(Number(value) || 0, 0, 25),
-        format: (value) => clampValue(Number(value) || 0, 0, 25)
+        fromChart: (value) => Math.max(0, Number(value) || 0),
+        format: (value) => Math.max(0, Number(value) || 0)
     },
     volL: {
         key: 'volL',
@@ -512,7 +512,6 @@ export class ScheduleEditor {
             const beatInput = document.createElement('input');
             beatInput.type = 'number';
             beatInput.min = '0';
-            beatInput.max = '25';
             beatInput.step = '0.1';
             beatInput.value = Number(entry.beatfreq || 0).toFixed(1);
             bindFocusHighlight(beatInput, 'beatfreq');
@@ -1485,17 +1484,29 @@ export class ScheduleEditor {
                     splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
                 };
             }
-            case 'beat':
+            case 'beat': {
+                const points = dataset.pointsByField.get('beatfreq') || [];
+                const values = points
+                    .map((point) => point.chartValue)
+                    .filter((value) => Number.isFinite(value) && value >= 0);
+                const minVal = 0;
+                const maxValue = values.length ? Math.max(...values) : 0;
+                const paddedMax = maxValue > 0 ? maxValue * 1.1 : 5;
+                let maxVal = paddedMax;
+                if (!Number.isFinite(maxVal) || maxVal <= minVal) {
+                    maxVal = minVal + 5;
+                }
                 return {
                     type: 'value',
-                    min: 0,
-                    max: 25,
+                    min: minVal,
+                    max: maxVal,
                     name: 'Beat Hz',
                     position: 'right',
                     axisLine: { lineStyle: { color: '#c084fc' } },
                     axisLabel: { color: 'rgba(255,255,255,0.75)' },
                     splitLine: { show: false }
                 };
+            }
             case 'volume':
             default:
                 return {
