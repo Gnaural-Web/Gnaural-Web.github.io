@@ -129,6 +129,7 @@ class GnauralEngine {
         const voices = voiceNodes.map((node, index) => this.#parseVoice(node, index));
         const computedDuration = voices.reduce((max, voice) => Math.max(max, voice.totalDurationSeconds), 0);
         const totalDurationSeconds = Math.max(metadata.totalTime || 0, computedDuration, 1);
+        this.#extendVoicesToDuration(voices, totalDurationSeconds);
 
         return {
             metadata,
@@ -202,7 +203,10 @@ class GnauralEngine {
             file,
             enabled: !mute && usableEntries.length > 0,
             entries: usableEntries,
-            totalDurationSeconds: offsetSeconds
+            entryDurationSeconds: offsetSeconds,
+            totalDurationSeconds: offsetSeconds,
+            loopDurationSeconds: offsetSeconds,
+            tail: null
         };
     }
 
@@ -241,10 +245,59 @@ class GnauralEngine {
         }
     }
 
+    #entryValuesAt(entry, progress) {
+        const clamped = clamp(Number.isFinite(progress) ? progress : 0, 0, 1);
+        return {
+            base: entry.baseStart + (entry.baseSpread ?? 0) * clamped,
+            beatHalf: entry.beatHalfStart + (entry.beatHalfSpread ?? 0) * clamped,
+            volL: entry.volLStart + (entry.volLSpread ?? 0) * clamped,
+            volR: entry.volRStart + (entry.volRSpread ?? 0) * clamped
+        };
+    }
+
+    #extendVoicesToDuration(voices, scheduleDuration) {
+        const EPSILON = 1e-6;
+        voices.forEach((voice) => {
+            const baseDuration = voice.entryDurationSeconds ?? voice.totalDurationSeconds ?? 0;
+            voice.tail = null;
+            voice.totalDurationSeconds = baseDuration;
+            voice.loopDurationSeconds = baseDuration;
+            if (!voice.entries.length || baseDuration <= 0) {
+                return;
+            }
+            const gap = scheduleDuration - baseDuration;
+            if (gap <= EPSILON) {
+                voice.totalDurationSeconds = baseDuration;
+                voice.loopDurationSeconds = baseDuration;
+                return;
+            }
+            const lastEntry = voice.entries[voice.entries.length - 1];
+            if (!lastEntry) {
+                return;
+            }
+            const finalValues = this.#entryValuesAt(lastEntry, 1);
+            voice.tail = {
+                duration: gap,
+                offsetSeconds: baseDuration,
+                baseStart: finalValues.base,
+                beatHalfStart: finalValues.beatHalf,
+                volLStart: finalValues.volL,
+                volRStart: finalValues.volR,
+                baseSpread: 0,
+                beatHalfSpread: 0,
+                volLSpread: 0,
+                volRSpread: 0,
+                state: lastEntry.state
+            };
+            voice.totalDurationSeconds = baseDuration + gap;
+            voice.loopDurationSeconds = voice.totalDurationSeconds;
+        });
+    }
+
     #renderVoiceRange(voice, schedule, rangeStart, rangeEnd, left, right, state) {
         const loopLength = schedule.totalDurationSeconds || 1;
         const totalLoops = schedule.loops;
-        const voiceLoopLength = voice.totalDurationSeconds;
+        const voiceLoopLength = voice.loopDurationSeconds ?? voice.totalDurationSeconds;
         const chunkSamples = left.length;
 
         const startLoop = Math.max(0, Math.floor(rangeStart / loopLength));
@@ -285,6 +338,38 @@ class GnauralEngine {
                     right
                 );
             });
+
+            if (voice.tail && voice.tail.duration > 0) {
+                const tailStart = loopBase + voice.tail.offsetSeconds;
+                const tailEnd = tailStart + voice.tail.duration;
+                if (tailEnd > rangeStart && tailStart < rangeEnd) {
+                    const segmentStart = Math.max(tailStart, rangeStart);
+                    const segmentEnd = Math.min(tailEnd, rangeEnd);
+                    if (segmentEnd > segmentStart) {
+                        const startSample = Math.max(0, Math.floor((segmentStart - rangeStart) * this.sampleRate));
+                        const endSample = Math.min(chunkSamples, Math.ceil((segmentEnd - rangeStart) * this.sampleRate));
+                        const sampleCount = Math.max(1, endSample - startSample);
+                        const progressStart = voice.tail.duration > 0
+                            ? (segmentStart - tailStart) / voice.tail.duration
+                            : 0;
+                        const progressEnd = voice.tail.duration > 0
+                            ? (segmentEnd - tailStart) / voice.tail.duration
+                            : 0;
+
+                        this.#mixEntrySegment(
+                            voice,
+                            voice.tail,
+                            startSample,
+                            sampleCount,
+                            progressStart,
+                            progressEnd,
+                            state,
+                            left,
+                            right
+                        );
+                    }
+                }
+            }
         }
     }
 
