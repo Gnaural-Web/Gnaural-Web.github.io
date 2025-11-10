@@ -133,22 +133,56 @@ const ensureEntries = (voice) => {
     const defaultBeat = isBinaural ? 4 : 0;
     if (!voice.entries || !voice.entries.length) {
         voice.entries = [
-            { duration: 60, basefreq: defaultBase, beatfreq: defaultBeat, volL: 0.7, volR: 0.7 }
+            { time: 0, basefreq: defaultBase, beatfreq: defaultBeat, volL: 0.7, volR: 0.7 }
         ];
     }
-    voice.entries = voice.entries.map((entry) => ({
-        duration: Number(entry.duration) || 0,
-        basefreq: Number.isFinite(Number(entry.basefreq)) ? Number(entry.basefreq) : defaultBase,
-        beatfreq: Number.isFinite(Number(entry.beatfreq)) ? Number(entry.beatfreq) : defaultBeat,
-        volL: Number(entry.volL ?? 0.7),
-        volR: Number(entry.volR ?? 0.7)
-    }));
+    const normalized = [];
+    let accumulatedTime = 0;
+    (voice.entries || []).forEach((entry, index) => {
+        const hasTime = Number.isFinite(Number(entry.time));
+        let entryTime = hasTime ? Math.max(0, Number(entry.time)) : accumulatedTime;
+        if (index === 0) {
+            entryTime = 0;
+        } else {
+            entryTime = Math.max(accumulatedTime + MIN_ENTRY_DURATION, entryTime);
+        }
+        const normalizedEntry = {
+            time: entryTime,
+            basefreq: Number.isFinite(Number(entry.basefreq)) ? Number(entry.basefreq) : defaultBase,
+            beatfreq: Number.isFinite(Number(entry.beatfreq)) ? Number(entry.beatfreq) : defaultBeat,
+            volL: Number(entry.volL ?? 0.7),
+            volR: Number(entry.volR ?? 0.7)
+        };
+        normalized.push(normalizedEntry);
+        const duration = Math.max(0, Number(entry.duration) || 0);
+        accumulatedTime = hasTime ? entryTime : entryTime + duration;
+    });
+    normalized.sort((a, b) => a.time - b.time);
+    normalized.forEach((entry, index) => {
+        if (index === 0) {
+            entry.time = 0;
+            return;
+        }
+        const prev = normalized[index - 1];
+        entry.time = Math.max(entry.time, prev.time + MIN_ENTRY_DURATION);
+    });
+    voice.entries = normalized;
 };
 
 export class ScheduleEditor {
     constructor({ app, soundLibrary = [] } = {}) {
         this.app = app;
         this.soundLibrary = soundLibrary;
+        this.soundInfoByFile = new Map(
+            (soundLibrary || []).map((item) => [
+                item.file,
+                {
+                    label: item.label,
+                    icon: item.icon || this.#inferIconPath(item.file)
+                }
+            ])
+        );
+        this.recordedFallbackIcon = 'icons/sound-wave.svg';
         this.modal = document.getElementById('scheduleEditorModal');
         this.titleInput = document.getElementById('editorTitle');
         this.authorInput = document.getElementById('editorAuthor');
@@ -179,9 +213,11 @@ export class ScheduleEditor {
         this.mode = options.mode || 'edit';
         this.currentData = deepClone(data || {});
         ensureEntriesStructure(this.currentData);
+        const longestVoice = this.#calculateLongestVoice();
+        const providedLength = Number(this.currentData.totalDurationSeconds) || 0;
         this.timelineLength = Math.max(
             MIN_TIMELINE_SECONDS,
-            Number(this.currentData.totalDurationSeconds) || this.#calculateLongestVoice()
+            Math.max(providedLength, longestVoice + MIN_ENTRY_DURATION)
         );
         this.#renderMetadata();
         this.#renderVoices();
@@ -386,20 +422,24 @@ export class ScheduleEditor {
             });
         };
 
-        const durationLabel = document.createElement('label');
-        durationLabel.textContent = 'Duration (s)';
-        const durationInput = document.createElement('input');
-        durationInput.type = 'number';
-        durationInput.min = '1';
-        durationInput.step = '0.1';
-        durationInput.value = Number(entry.duration || 0).toFixed(1);
-        bindFocusHighlight(durationInput, 'duration');
-        durationInput.addEventListener('input', (event) => {
-            this.#handleDurationInput(voiceIndex, entryIndex, event.target);
+        const timeLabel = document.createElement('label');
+        timeLabel.textContent = 'Time (s)';
+        const timeInput = document.createElement('input');
+        timeInput.type = 'number';
+        timeInput.min = '0';
+        timeInput.step = '0.1';
+        timeInput.value = Number(entry.time || 0).toFixed(1);
+        if (entryIndex === 0) {
+            timeInput.value = '0.0';
+            timeInput.disabled = true;
+        }
+        bindFocusHighlight(timeInput, 'time');
+        timeInput.addEventListener('input', (event) => {
+            this.#handleTimeInput(voiceIndex, entryIndex, event.target);
         });
-        durationLabel.appendChild(durationInput);
-        row.appendChild(durationLabel);
-        entryInputs.duration = durationInput;
+        timeLabel.appendChild(timeInput);
+        row.appendChild(timeLabel);
+        entryInputs.time = timeInput;
 
         const volLLabel = document.createElement('label');
         volLLabel.textContent = 'Left Volume (%)';
@@ -518,12 +558,8 @@ export class ScheduleEditor {
 
     #calculateEntryStarts(voice) {
         const entries = voice.entries || [];
-        const starts = [];
-        let total = 0;
-        entries.forEach((entry) => {
-            starts.push(total);
-            total += Math.max(0, Number(entry.duration || 0));
-        });
+        const starts = entries.map((entry) => Math.max(0, Number(entry.time) || 0));
+        const total = starts.length ? starts[starts.length - 1] : 0;
         return { starts, total };
     }
 
@@ -531,7 +567,7 @@ export class ScheduleEditor {
         const fields = this.#getVoiceFields(voice);
         const { starts, total } = this.#calculateEntryStarts(voice);
         const entries = voice.entries || [];
-        const timelineEnd = Math.max(total, this.timelineLength);
+        const timelineEnd = Math.max(this.timelineLength, total + MIN_ENTRY_DURATION);
         const pointsByField = new Map();
 
         fields.forEach((config) => {
@@ -581,7 +617,7 @@ export class ScheduleEditor {
             pointsByField,
             starts,
             timelineEnd,
-            totalDuration: total
+            totalDuration: timelineEnd
         };
     }
 
@@ -596,7 +632,7 @@ export class ScheduleEditor {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'voice-type-button';
-        button.innerHTML = this.#getVoiceTypeIcon(voice);
+        this.#setElementIcon(button, this.#getVoiceTypeIcon(voice), this.#getVoiceTypeLabel(voice));
         button.addEventListener('click', (event) => {
             event.stopPropagation();
             if (this.openMenu && this.openMenu !== wrapper.querySelector('.voice-type-menu')) {
@@ -623,7 +659,16 @@ export class ScheduleEditor {
             const optionButton = document.createElement('button');
             optionButton.type = 'button';
             optionButton.className = 'voice-type-option';
-            optionButton.innerHTML = `${option.icon}<span>${option.label}</span>`;
+            const iconWrap = document.createElement('span');
+            iconWrap.className = 'voice-type-option-icon';
+            const iconEl = this.#createIconElement(option.icon, option.label);
+            if (iconEl) {
+                iconWrap.appendChild(iconEl);
+            }
+            optionButton.appendChild(iconWrap);
+            const labelSpan = document.createElement('span');
+            labelSpan.textContent = option.label;
+            optionButton.appendChild(labelSpan);
             optionButton.addEventListener('click', (event) => {
                 event.stopPropagation();
                 this.#setVoiceType(index, option);
@@ -638,25 +683,21 @@ export class ScheduleEditor {
 
     #buildTypeOptions(currentVoice) {
         const options = [
-            { type: 0, label: 'Binaural Beat (Generated)', icon: ICONS.binaural },
-            { type: 3, label: 'White Noise (Generated)', icon: ICONS.noiseWhite },
-            { type: 1, label: 'Pink Noise (Generated)', icon: ICONS.noisePink }
+            { type: 0, label: 'Binaural Beat (Generated)', icon: this.#iconSpecFromSvg(ICONS.binaural) },
+            { type: 3, label: 'White Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseWhite) },
+            { type: 1, label: 'Pink Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noisePink) }
         ];
-        const recorded = this.soundLibrary.map((item) => ({
-            type: 2,
-            label: item.label,
-            file: item.file,
-            icon: ICONS.sample
-        }));
+        const recorded = (this.soundLibrary || [])
+            .map((item) => this.#buildRecordedOption(item.file, item.label))
+            .filter(Boolean);
         if (currentVoice?.type === 2 && currentVoice.file) {
             const exists = recorded.some((item) => item.file === currentVoice.file);
             if (!exists) {
-                recorded.unshift({
-                    type: 2,
-                    label: currentVoice.file,
-                    file: currentVoice.file,
-                    icon: ICONS.sample
-                });
+                const fallbackLabel = currentVoice.description?.trim() || this.#friendlyNameFromFile(currentVoice.file) || currentVoice.file;
+                const extra = this.#buildRecordedOption(currentVoice.file, fallbackLabel);
+                if (extra) {
+                    recorded.unshift(extra);
+                }
             }
         }
         return options.concat(recorded);
@@ -693,14 +734,12 @@ export class ScheduleEditor {
         if (!this.currentData?.voices?.[voiceIndex]) return;
         const voice = this.currentData.voices[voiceIndex];
         if (!voice.entries?.[entryIndex]) return;
-        voice.entries[entryIndex][key] = value;
-        if (key === 'duration') {
-            this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice());
-            if (this.lengthInput) {
-                this.lengthInput.value = Math.round(this.timelineLength);
-            }
+        if (key === 'time') {
+            this.#setEntryTime(voice, entryIndex, value);
+        } else {
+            voice.entries[entryIndex][key] = value;
         }
-        this.#updateVoiceView(voiceIndex, { rebuild: key === 'duration', keepInputs: false });
+        this.#updateVoiceView(voiceIndex, { rebuild: key === 'time', keepInputs: false });
     }
 
     #addVoice() {
@@ -710,7 +749,7 @@ export class ScheduleEditor {
             type: 0,
             file: '',
             entries: [
-                { duration: 120, basefreq: 220, beatfreq: 4, volL: 0.7, volR: 0.7 }
+                { time: 0, basefreq: 220, beatfreq: 4, volL: 0.7, volR: 0.7 }
             ]
         };
         this.currentData.voices = this.currentData.voices || [];
@@ -728,8 +767,20 @@ export class ScheduleEditor {
         if (!this.currentData?.voices?.[index]) return;
         const voice = this.currentData.voices[index];
         const last = voice.entries[voice.entries.length - 1];
+        const lastTime = Number(last?.time) || 0;
+        const defaultGap = 60;
+        let proposedTime = lastTime + defaultGap;
+        if (proposedTime <= lastTime) {
+            proposedTime = lastTime + MIN_ENTRY_DURATION;
+        }
+        if (proposedTime >= this.timelineLength) {
+            this.timelineLength = proposedTime + MIN_ENTRY_DURATION;
+            if (this.lengthInput) {
+                this.lengthInput.value = Math.round(this.timelineLength);
+            }
+        }
         voice.entries.push({
-            duration: last?.duration || 60,
+            time: proposedTime,
             basefreq: last?.basefreq || 220,
             beatfreq: last?.beatfreq || 4,
             volL: last?.volL || 0.7,
@@ -742,7 +793,6 @@ export class ScheduleEditor {
         if (!this.currentData?.voices?.[voiceIndex]) return;
         const voice = this.currentData.voices[voiceIndex];
         if (voice.entries.length <= 1) {
-            voice.entries[0].duration = Math.max(1, voice.entries[0].duration);
             return;
         }
         voice.entries.splice(entryIndex, 1);
@@ -752,9 +802,10 @@ export class ScheduleEditor {
     #handleApply() {
         if (!this.currentData) return;
         this.#syncMetadataFromInputs();
-        this.currentData.totalDurationSeconds = Math.max(MIN_TIMELINE_SECONDS, this.timelineLength);
+        const exportData = this.#buildExportData();
+        if (!exportData) return;
         if (this.app?.applyEditedSchedule) {
-            this.app.applyEditedSchedule(this.currentData);
+            this.app.applyEditedSchedule(exportData);
         }
         this.close();
     }
@@ -762,9 +813,9 @@ export class ScheduleEditor {
     #handleDownload() {
         if (!this.currentData) return;
         this.#syncMetadataFromInputs();
-        this.currentData.totalDurationSeconds = Math.max(MIN_TIMELINE_SECONDS, this.timelineLength);
-        if (!this.app?.generateScheduleXml) return;
-        const xml = this.app.generateScheduleXml(this.currentData);
+        const exportData = this.#buildExportData();
+        if (!exportData || !this.app?.generateScheduleXml) return;
+        const xml = this.app.generateScheduleXml(exportData);
         const blob = new Blob([xml], { type: 'application/xml' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -785,10 +836,51 @@ export class ScheduleEditor {
         metadata.description = this.descriptionInput?.value || '';
         metadata.loops = Math.max(1, Number(this.loopsInput?.value) || 1);
         this.currentData.metadata = metadata;
+        this.currentData.totalDurationSeconds = Math.max(MIN_TIMELINE_SECONDS, this.timelineLength);
+    }
+
+    #buildExportData() {
+        if (!this.currentData) return null;
+        const timelineEnd = Math.max(MIN_TIMELINE_SECONDS, this.timelineLength);
+        const exportData = deepClone(this.currentData);
+        let maxTimeline = timelineEnd;
+        exportData.voices = (this.currentData.voices || []).map((voice) => {
+            const voiceClone = deepClone(voice);
+            const normalizedEntries = (voice.entries || [])
+                .map((entry) => ({
+                    time: Math.max(0, Number(entry.time) || 0),
+                    basefreq: Number(entry.basefreq ?? 0),
+                    beatfreq: Number(entry.beatfreq ?? 0),
+                    volL: Number(entry.volL ?? 0.7),
+                    volR: Number(entry.volR ?? 0.7)
+                }))
+                .sort((a, b) => a.time - b.time);
+            const lastTime = normalizedEntries.length ? normalizedEntries[normalizedEntries.length - 1].time : 0;
+            const effectiveTimeline = Math.max(timelineEnd, lastTime + MIN_ENTRY_DURATION);
+            maxTimeline = Math.max(maxTimeline, effectiveTimeline);
+            const convertedEntries = normalizedEntries.map((entry, index) => {
+                const nextTime = index + 1 < normalizedEntries.length ? normalizedEntries[index + 1].time : effectiveTimeline;
+                const safeNext = Math.max(nextTime, entry.time + MIN_ENTRY_DURATION);
+                const duration = Math.max(MIN_ENTRY_DURATION, safeNext - entry.time);
+                return {
+                    duration,
+                    basefreq: entry.basefreq,
+                    beatfreq: entry.beatfreq,
+                    volL: entry.volL,
+                    volR: entry.volR
+                };
+            });
+            voiceClone.entries = convertedEntries;
+            return voiceClone;
+        });
+        exportData.totalDurationSeconds = maxTimeline;
+        return exportData;
     }
 
     #updateTimelineLength(value) {
-        const normalized = Math.max(MIN_TIMELINE_SECONDS, Number(value) || MIN_TIMELINE_SECONDS);
+        const requested = Number(value) || MIN_TIMELINE_SECONDS;
+        const longestVoice = this.#calculateLongestVoice();
+        const normalized = Math.max(MIN_TIMELINE_SECONDS, longestVoice + MIN_ENTRY_DURATION, requested);
         this.timelineLength = normalized;
         if (this.lengthInput) {
             this.lengthInput.value = Math.round(normalized);
@@ -797,11 +889,13 @@ export class ScheduleEditor {
     }
 
     #calculateLongestVoice() {
-        if (!this.currentData?.voices?.length) return MIN_TIMELINE_SECONDS;
+        if (!this.currentData?.voices?.length) return 0;
         return this.currentData.voices.reduce((max, voice) => {
-            const total = (voice.entries || []).reduce((sum, entry) => sum + Number(entry.duration || 0), 0);
-            return Math.max(max, total);
-        }, MIN_TIMELINE_SECONDS);
+            const entries = voice.entries || [];
+            if (!entries.length) return max;
+            const lastTime = Number(entries[entries.length - 1]?.time) || 0;
+            return Math.max(max, lastTime);
+        }, 0);
     }
 
     #getVoiceTypeLabel(voice) {
@@ -812,8 +906,12 @@ export class ScheduleEditor {
                 return 'Pink Noise';
             case 3:
                 return 'White Noise';
-            case 2:
-                return voice.file ? `Recorded • ${voice.file}` : 'Recorded Sound';
+            case 2: {
+                if (!voice?.file) return 'Recorded Sound';
+                const recorded = this.#buildRecordedOption(voice.file, voice.description?.trim());
+                const label = recorded?.label || voice.file;
+                return `Recorded • ${label}`;
+            }
             default:
                 return 'Voice';
         }
@@ -822,16 +920,91 @@ export class ScheduleEditor {
     #getVoiceTypeIcon(voice) {
         switch (Number(voice.type)) {
             case 0:
-                return ICONS.binaural;
+                return this.#iconSpecFromSvg(ICONS.binaural);
             case 1:
-                return ICONS.noisePink;
+                return this.#iconSpecFromSvg(ICONS.noisePink);
             case 3:
-                return ICONS.noiseWhite;
-            case 2:
-                return ICONS.sample;
+                return this.#iconSpecFromSvg(ICONS.noiseWhite);
+            case 2: {
+                const recorded = this.#buildRecordedOption(voice.file, voice.description?.trim());
+                return recorded?.icon || this.#iconSpecFromSvg(ICONS.sample);
+            }
             default:
-                return ICONS.binaural;
+                return this.#iconSpecFromSvg(ICONS.binaural);
         }
+    }
+
+    #setElementIcon(element, iconSpec, altText = '') {
+        if (!element) return;
+        element.innerHTML = '';
+        const iconEl = this.#createIconElement(iconSpec, altText);
+        if (iconEl) {
+            element.appendChild(iconEl);
+        }
+    }
+
+    #createIconElement(iconSpec, altText = '') {
+        if (!iconSpec) return null;
+        if (iconSpec.kind === 'svg' && typeof iconSpec.value === 'string') {
+            const template = document.createElement('template');
+            template.innerHTML = iconSpec.value.trim();
+            return template.content.firstElementChild;
+        }
+        if (iconSpec.kind === 'img' && iconSpec.value) {
+            const img = document.createElement('img');
+            img.src = iconSpec.value;
+            img.alt = altText || '';
+            img.decoding = 'async';
+            img.loading = 'lazy';
+            return img;
+        }
+        return null;
+    }
+
+    #iconSpecFromSvg(svg) {
+        return svg ? { kind: 'svg', value: svg } : null;
+    }
+
+    #iconSpecFromPath(path) {
+        if (!path) return null;
+        return { kind: 'img', value: path };
+    }
+
+    #buildRecordedOption(file, preferredLabel) {
+        if (!file) return null;
+        const info = this.soundInfoByFile?.get?.(file);
+        const label = preferredLabel || info?.label || this.#friendlyNameFromFile(file) || file;
+        const iconPath = info?.icon || this.#inferIconPath(file) || this.recordedFallbackIcon;
+        const iconSpec = this.#iconSpecFromPath(iconPath) || this.#iconSpecFromSvg(ICONS.sample);
+        if (!info && this.soundInfoByFile) {
+            this.soundInfoByFile.set(file, { label, icon: iconPath });
+        }
+        return {
+            type: 2,
+            label,
+            file,
+            icon: iconSpec
+        };
+    }
+
+    #inferIconPath(file) {
+        if (!file || typeof file !== 'string') return null;
+        const name = file.split('/').pop();
+        if (!name) return null;
+        const base = name.replace(/\.[^/.]+$/, '');
+        if (!base) return null;
+        return `icons/${base}.svg`;
+    }
+
+    #friendlyNameFromFile(file) {
+        if (!file || typeof file !== 'string') return '';
+        const name = file.split('/').pop()?.replace(/\.[^/.]+$/, '') || '';
+        if (!name) return '';
+        return name
+            .split(/[-_\s]+/)
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ');
     }
 
     #renderVoiceChart(view) {
@@ -1023,7 +1196,8 @@ export class ScheduleEditor {
                             endEntryIndex: segment.endPoint.entryIndex,
                             startPoint: segment.startPoint,
                             endPoint: segment.endPoint,
-                            ratio: t
+                            ratio: t,
+                            isTerminal: segment.isTerminal
                         };
                     }
                 });
@@ -1059,7 +1233,7 @@ export class ScheduleEditor {
         if (!config) return;
 
         if (Number.isFinite(timeValue)) {
-            this.#setEntryStartTime(voice, state.entryIndex, timeValue);
+            this.#setEntryTime(voice, state.entryIndex, timeValue);
         }
 
         if (Number.isFinite(chartValue)) {
@@ -1085,7 +1259,9 @@ export class ScheduleEditor {
                 ? config.fromChart(state.initialPointerChart + deltaChart) - state.initialPointerActual
                 : deltaChart;
 
-        const applyDelta = (entryIndex) => {
+        const targets = new Set([state.startEntryIndex, state.endEntryIndex]);
+        targets.forEach((entryIndex) => {
+            if (!Number.isInteger(entryIndex) || entryIndex < 0) return;
             if (!voice.entries?.[entryIndex]) return;
             if (config.axisGroup === 'volume') {
                 const current = voice.entries[entryIndex][state.fieldKey];
@@ -1094,10 +1270,7 @@ export class ScheduleEditor {
                 const current = voice.entries[entryIndex][state.fieldKey];
                 voice.entries[entryIndex][state.fieldKey] = clampValue(current + deltaChart, config.min, config.max);
             }
-        };
-
-        applyDelta(state.startEntryIndex);
-        applyDelta(state.endEntryIndex);
+        });
 
         state.initialPointerChart = bounded;
         state.initialPointerActual =
@@ -1115,9 +1288,39 @@ export class ScheduleEditor {
 
         const { starts } = this.#calculateEntryStarts(voice);
         const startTime = starts[segmentHit.startEntryIndex] ?? 0;
-        const endTime = starts[segmentHit.endEntryIndex] ?? (startTime + Number(voice.entries[segmentHit.startEntryIndex]?.duration || 0));
-        const clampedTime = clampValue(timeValue, startTime + MIN_ENTRY_DURATION, endTime - MIN_ENTRY_DURATION);
-        const ratio = (clampedTime - startTime) / Math.max(MIN_ENTRY_DURATION, endTime - startTime);
+        const dataset = view.dataset;
+        const timelineEnd = Number(dataset?.timelineEnd) || this.timelineLength;
+        let endTime;
+        if (segmentHit.isTerminal) {
+            endTime = timelineEnd;
+        } else if (
+            Number.isInteger(segmentHit.endEntryIndex) &&
+            segmentHit.endEntryIndex >= 0 &&
+            segmentHit.endEntryIndex < starts.length
+        ) {
+            endTime = starts[segmentHit.endEntryIndex];
+        } else {
+            endTime = timelineEnd;
+        }
+        if (!Number.isFinite(endTime)) {
+            endTime = timelineEnd;
+        }
+        if (endTime <= startTime + MIN_ENTRY_DURATION) {
+            endTime = startTime + MIN_ENTRY_DURATION * 2;
+            if (segmentHit.isTerminal) {
+                this.timelineLength = Math.max(this.timelineLength, endTime);
+            }
+        }
+        let minTime = startTime + MIN_ENTRY_DURATION;
+        let maxTime = endTime - MIN_ENTRY_DURATION;
+        if (minTime >= maxTime) {
+            const mid = startTime + (endTime - startTime) / 2;
+            minTime = mid;
+            maxTime = mid;
+        }
+        const clampedTime = clampValue(timeValue, minTime, maxTime);
+        const span = Math.max(endTime - startTime, MIN_ENTRY_DURATION);
+        const ratio = span > 0 ? (clampedTime - startTime) / span : 0;
 
         const config = meta.config;
         const startValue = segmentHit.startPoint.value;
@@ -1125,15 +1328,12 @@ export class ScheduleEditor {
         const interpolatedChart = startValue + (endValue - startValue) * ratio;
         const boundedChart = clampValue(Number.isFinite(chartValue) ? chartValue : interpolatedChart, config.min, config.max);
         const actualValue = config.axisGroup === 'volume' ? config.fromChart(boundedChart) : config.format(boundedChart);
-
-        const entryDuration = Number(voice.entries[segmentHit.startEntryIndex]?.duration || MIN_ENTRY_DURATION);
-        const firstDuration = Math.max(MIN_ENTRY_DURATION, clampedTime - startTime);
-        const secondDuration = Math.max(MIN_ENTRY_DURATION, endTime - clampedTime);
-        voice.entries[segmentHit.startEntryIndex].duration = firstDuration;
-
         const startEntry = voice.entries[segmentHit.startEntryIndex];
-        const endEntry = voice.entries[segmentHit.endEntryIndex];
-        const newEntry = { duration: secondDuration };
+        const endEntry =
+            segmentHit.isTerminal || !Number.isInteger(segmentHit.endEntryIndex)
+                ? startEntry
+                : voice.entries[segmentHit.endEntryIndex] ?? startEntry;
+        const newEntry = { time: clampedTime };
         const fields = this.#getVoiceFields(voice);
         fields.forEach((cfg) => {
             const startVal = this.#getEntryFieldValue(startEntry, cfg.key);
@@ -1148,7 +1348,7 @@ export class ScheduleEditor {
         newEntry[segmentHit.fieldKey] = actualValue;
         voice.entries.splice(segmentHit.startEntryIndex + 1, 0, newEntry);
 
-        this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice());
+        this.timelineLength = Math.max(this.timelineLength, newEntry.time + MIN_ENTRY_DURATION);
         if (this.lengthInput) {
             this.lengthInput.value = Math.round(this.timelineLength);
         }
@@ -1317,14 +1517,15 @@ export class ScheduleEditor {
             for (let i = 0; i < pixels.length - 1; i += 1) {
                 const startPoint = meta.points[i];
                 const endPoint = meta.points[i + 1];
-                if (!startPoint || !endPoint || endPoint.isEnd) continue;
+                if (!startPoint || !endPoint) continue;
                 segments.push({
                     startIndex: i,
                     endIndex: i + 1,
                     startPoint,
                     endPoint,
                     startPixel: pixels[i],
-                    endPixel: pixels[i + 1]
+                    endPixel: pixels[i + 1],
+                    isTerminal: Boolean(endPoint.isEnd)
                 });
             }
             meta.segments = segments;
@@ -1352,21 +1553,25 @@ export class ScheduleEditor {
         this.#updateVoiceView(voiceIndex, { rebuild: false, keepInputs: true });
     }
 
-    #handleDurationInput(voiceIndex, entryIndex, input) {
+    #handleTimeInput(voiceIndex, entryIndex, input) {
+        if (entryIndex === 0) {
+            input.value = '0.0';
+            return;
+        }
         const voice = this.currentData?.voices?.[voiceIndex];
         if (!voice?.entries?.[entryIndex]) return;
         const raw = String(input.value ?? '').trim();
         if (!raw) return;
-        let duration = Number(raw);
-        if (!Number.isFinite(duration)) return;
-        duration = Math.max(1, duration);
-        input.value = duration.toFixed(1);
-        voice.entries[entryIndex].duration = duration;
-        this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice());
+        let timeValue = Number(raw);
+        if (!Number.isFinite(timeValue)) return;
+        timeValue = Math.max(0, timeValue);
+        input.value = timeValue.toFixed(1);
+        this.#setEntryTime(voice, entryIndex, timeValue);
+        this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice() + MIN_ENTRY_DURATION);
         if (this.lengthInput) {
             this.lengthInput.value = Math.round(this.timelineLength);
         }
-        this.#highlightEntry(voiceIndex, entryIndex, {});
+        this.#highlightEntry(voiceIndex, entryIndex, { field: 'time' });
         this.#updateVoiceView(voiceIndex, { rebuild: true, keepInputs: true });
     }
 
@@ -1408,8 +1613,10 @@ export class ScheduleEditor {
             const entry = voice.entries?.[entryView.entryIndex];
             if (!entry) return;
             const { inputs } = entryView;
-            if (inputs.duration) {
-                inputs.duration.value = Number(entry.duration || 0).toFixed(1);
+            if (inputs.time) {
+                const isFirst = entryView.entryIndex === 0;
+                inputs.time.value = Number(entry.time || 0).toFixed(1);
+                inputs.time.disabled = isFirst;
             }
             if (inputs.volL) {
                 inputs.volL.value = Math.round(volumeToPercent(entry.volL));
@@ -1426,24 +1633,34 @@ export class ScheduleEditor {
         });
     }
 
-    #setEntryStartTime(voice, entryIndex, targetTime) {
+    #setEntryTime(voice, entryIndex, targetTime) {
         if (entryIndex <= 0) return;
-        const { starts } = this.#calculateEntryStarts(voice);
-        const prevStart = starts[entryIndex - 1] ?? 0;
-        const currentStart = starts[entryIndex] ?? prevStart;
-        const currentDuration = Number(voice.entries[entryIndex]?.duration || MIN_ENTRY_DURATION);
-        const isLast = entryIndex === (voice.entries?.length || 0) - 1;
-        const nextStart = entryIndex + 1 < starts.length ? starts[entryIndex + 1] : currentStart + currentDuration;
-        const maxAllowed = isLast ? Number.POSITIVE_INFINITY : nextStart - MIN_ENTRY_DURATION;
-        const clamped = clampValue(targetTime, prevStart + MIN_ENTRY_DURATION, maxAllowed);
-        const prevDuration = Math.max(MIN_ENTRY_DURATION, clamped - prevStart);
-        voice.entries[entryIndex - 1].duration = prevDuration;
+        const entries = voice.entries || [];
+        if (!entries[entryIndex]) return;
+        const previous = entries[entryIndex - 1];
+        const next = entries[entryIndex + 1];
+        const prevTime = Number(previous?.time) || 0;
+        const nextTime = Number(next?.time ?? Number.POSITIVE_INFINITY);
+        const minAllowed = prevTime + MIN_ENTRY_DURATION;
+        let maxAllowed = Number.isFinite(nextTime) ? nextTime - MIN_ENTRY_DURATION : Number.POSITIVE_INFINITY;
+        if (maxAllowed <= minAllowed) {
+            maxAllowed = minAllowed;
+        }
+        let clamped = Number.isFinite(targetTime) ? targetTime : minAllowed;
+        if (Number.isFinite(maxAllowed)) {
+            clamped = clampValue(clamped, minAllowed, maxAllowed);
+        } else {
+            clamped = Math.max(clamped, minAllowed);
+        }
+        entries[entryIndex].time = clamped;
+        const isLast = entryIndex === entries.length - 1;
         if (isLast) {
-            const newStart = prevStart + prevDuration;
-            const endTime = newStart + currentDuration;
-            this.timelineLength = Math.max(this.timelineLength, endTime);
-            if (this.lengthInput) {
-                this.lengthInput.value = Math.round(this.timelineLength);
+            const requiredTimeline = Math.max(this.timelineLength, clamped + MIN_ENTRY_DURATION);
+            if (requiredTimeline > this.timelineLength) {
+                this.timelineLength = requiredTimeline;
+                if (this.lengthInput) {
+                    this.lengthInput.value = Math.round(this.timelineLength);
+                }
             }
         }
     }

@@ -1079,6 +1079,12 @@ input[type="range"]::-moz-range-thumb {
     transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
+.voice-type-button svg,
+.voice-type-button img {
+    width: 24px;
+    height: 24px;
+}
+
 .voice-type-button:hover,
 .voice-type-button:focus-visible {
     border-color: var(--accent);
@@ -1122,9 +1128,22 @@ input[type="range"]::-moz-range-thumb {
     background: rgba(255, 255, 255, 0.08);
 }
 
-.voice-type-option svg {
+.voice-type-option-icon {
+    display: grid;
+    place-items: center;
     width: 24px;
     height: 24px;
+    flex-shrink: 0;
+}
+
+.voice-type-option-icon svg,
+.voice-type-option-icon img {
+    width: 24px;
+    height: 24px;
+}
+
+.voice-type-option-icon img {
+    object-fit: contain;
 }
 
 .voice-card-title {

@@ -8,20 +8,20 @@ const RENDER_CONFIG = {
 };
 const QUICK_SEEK_BUFFER_SECONDS = 15;
 const SOUND_LIBRARY = [
-    { label: 'Birds', file: 'sounds/birds.ogg' },
-    { label: 'Boat', file: 'sounds/boat.ogg' },
-    { label: 'City', file: 'sounds/city.ogg' },
-    { label: 'Coffee Shop', file: 'sounds/coffee-shop.ogg' },
-    { label: 'Fireplace', file: 'sounds/fireplace.ogg' },
-    { label: 'Pink Noise', file: 'sounds/pink-noise.ogg' },
-    { label: 'Rain', file: 'sounds/rain.ogg' },
-    { label: 'Summer Night', file: 'sounds/summer-night.ogg' },
-    { label: 'Storm', file: 'sounds/storm.ogg' },
-    { label: 'Stream', file: 'sounds/stream.ogg' },
-    { label: 'Train', file: 'sounds/train.ogg' },
-    { label: 'Waves', file: 'sounds/waves.ogg' },
-    { label: 'White Noise', file: 'sounds/white-noise.ogg' },
-    { label: 'Wind', file: 'sounds/wind.ogg' }
+    { label: 'Birds', file: 'sounds/birds.ogg', icon: 'icons/birds.svg' },
+    { label: 'Boat', file: 'sounds/boat.ogg', icon: 'icons/boat.svg' },
+    { label: 'City', file: 'sounds/city.ogg', icon: 'icons/city.svg' },
+    { label: 'Coffee Shop', file: 'sounds/coffee-shop.ogg', icon: 'icons/coffee-shop.svg' },
+    { label: 'Fireplace', file: 'sounds/fireplace.ogg', icon: 'icons/fireplace.svg' },
+    { label: 'Pink Noise', file: 'sounds/pink-noise.ogg', icon: 'icons/pink-noise.svg' },
+    { label: 'Rain', file: 'sounds/rain.ogg', icon: 'icons/rain.svg' },
+    { label: 'Summer Night', file: 'sounds/summer-night.ogg', icon: 'icons/summer-night.svg' },
+    { label: 'Storm', file: 'sounds/storm.ogg', icon: 'icons/storm.svg' },
+    { label: 'Stream', file: 'sounds/stream.ogg', icon: 'icons/stream.svg' },
+    { label: 'Train', file: 'sounds/train.ogg', icon: 'icons/train.svg' },
+    { label: 'Waves', file: 'sounds/waves.ogg', icon: 'icons/waves.svg' },
+    { label: 'White Noise', file: 'sounds/white-noise.ogg', icon: 'icons/white-noise.svg' },
+    { label: 'Wind', file: 'sounds/wind.ogg', icon: 'icons/wind.svg' }
 ];
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
