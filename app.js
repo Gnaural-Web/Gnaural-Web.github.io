@@ -70,6 +70,29 @@ class WhiteNoiseGenerator {
     }
 }
 
+class BrownNoiseGenerator {
+    constructor(seed = Date.now() & 0xffffffff) {
+        this.seed = seed >>> 0 || 1;
+        this.last = 0;
+    }
+
+    #random() {
+        this.seed = (1664525 * this.seed + 1013904223) >>> 0;
+        return (this.seed / 0xffffffff) * 2 - 1;
+    }
+
+    next() {
+        const white = this.#random();
+        this.last += white * 0.02;
+        if (this.last < -1) {
+            this.last = -1;
+        } else if (this.last > 1) {
+            this.last = 1;
+        }
+        return this.last;
+    }
+}
+
 class GnauralEngine {
     constructor({ sampleRate = 44100 } = {}) {
         this.sampleRate = sampleRate;
@@ -279,6 +302,9 @@ class GnauralEngine {
             case 3:
                 this.#mixWhiteNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
                 break;
+            case 4:
+                this.#mixBrownNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                break;
             default:
                 break;
         }
@@ -359,6 +385,32 @@ class GnauralEngine {
             } else {
                 left[sampleIndex] += sampleValue * volL;
                 right[sampleIndex] += state.white.next() * volR;
+            }
+            progress += progressDelta;
+        }
+    }
+
+    #mixBrownNoise(entry, mono, startSample, sampleCount, progressStart, progressEnd, left, right, state) {
+        if (!state.brown) {
+            state.brown = new BrownNoiseGenerator();
+        }
+        const chunkLength = left.length;
+        const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
+        let progress = progressStart;
+        for (let i = 0; i < sampleCount; i += 1) {
+            const clamped = clamp(progress, 0, 1);
+            const volL = entry.volLStart + entry.volLSpread * clamped;
+            const volR = entry.volRStart + entry.volRSpread * clamped;
+            const sampleIndex = startSample + i;
+            if (sampleIndex >= chunkLength) break;
+            const value = state.brown.next();
+            if (mono) {
+                const gain = 0.5 * (volL + volR);
+                left[sampleIndex] += value * gain;
+                right[sampleIndex] += value * gain;
+            } else {
+                left[sampleIndex] += value * volL;
+                right[sampleIndex] += state.brown.next() * volR;
             }
             progress += progressDelta;
         }

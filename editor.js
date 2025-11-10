@@ -16,6 +16,7 @@ const ICONS = {
     binaural: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4a5 5 0 0 0-5 5v6a4 4 0 0 0 4 4h1a1 1 0 0 0 1-1V9a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v9a1 1 0 0 0 1 1h1a4 4 0 0 0 4-4V9a5 5 0 0 0-5-5H7z"/></svg>',
     noisePink: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 18c2.5-4 5-6 8-6s5.5 2 8 6l-1.6 1.2C16.3 16 14.4 14.8 12 14.8c-2.4 0-4.3 1.2-6.4 4.4z"/><path fill="currentColor" opacity="0.5" d="M4 6c2.5 4 5 6 8 6s5.5-2 8-6l-1.6-1.2C16.3 8 14.4 9.2 12 9.2c-2.4 0-4.3-1.2-6.4-4.4z"/></svg>',
     noiseWhite: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h2l2 6 2-6h2l2 6 2-6h2l-3 16h-2l-2-6-2 6H8z"/></svg>',
+    noiseBrown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#c08457" d="M4 18c2.4-3.8 4.8-5.7 8-5.7s5.6 1.9 8 5.7l-2 1.4c-1.8-2.8-3.4-3.9-6-3.9s-4.3 1.2-6 3.9z"/><path fill="#8b5e34" d="M4 10c2.4 3.8 4.8 5.7 8 5.7s5.6-1.9 8-5.7l-2-1.4c-1.8 2.8-3.4 3.9-6 3.9s-4.3-1.2-6-3.9z"/><path fill="#5f3b1f" d="M4 4c2.4 3.2 4.8 4.8 8 4.8s5.6-1.6 8-4.8L18 3c-1.8 2-3.4 3-6 3s-4.3-1-6-3z"/></svg>',
     sample: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm8 1.5V9h3.5z"/></svg>',
     remove: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h10l-1 15H8z"/><path fill="currentColor" d="M5 5h14v2H5z"/><path fill="currentColor" d="M9 2h6v2H9z"/></svg>',
     add: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>'
@@ -101,7 +102,7 @@ const FIELD_CONFIGS = {
         axisGroup: 'volume',
         color: '#34d399',
         symbol: 'rect',
-        supportedTypes: new Set([0, 1, 2, 3]),
+        supportedTypes: new Set([0, 1, 2, 3, 4]),
         min: 0,
         max: 100,
         toChart: (value) => volumeToPercent(value),
@@ -115,7 +116,7 @@ const FIELD_CONFIGS = {
         axisGroup: 'volume',
         color: '#f472b6',
         symbol: 'triangle',
-        supportedTypes: new Set([0, 1, 2, 3]),
+        supportedTypes: new Set([0, 1, 2, 3, 4]),
         min: 0,
         max: 100,
         toChart: (value) => volumeToPercent(value),
@@ -684,8 +685,9 @@ export class ScheduleEditor {
     #buildTypeOptions(currentVoice) {
         const options = [
             { type: 0, label: 'Binaural Beat (Generated)', icon: this.#iconSpecFromSvg(ICONS.binaural) },
-            { type: 3, label: 'White Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseWhite) },
-            { type: 1, label: 'Pink Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noisePink) }
+            { type: 4, label: 'Brown Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseBrown) },
+            { type: 1, label: 'Pink Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noisePink) },
+            { type: 3, label: 'White Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseWhite) }
         ];
         const recorded = (this.soundLibrary || [])
             .map((item) => this.#buildRecordedOption(item.file, item.label))
@@ -906,6 +908,8 @@ export class ScheduleEditor {
                 return 'Pink Noise';
             case 3:
                 return 'White Noise';
+            case 4:
+                return 'Brown Noise';
             case 2: {
                 if (!voice?.file) return 'Recorded Sound';
                 const recorded = this.#buildRecordedOption(voice.file, voice.description?.trim());
@@ -925,6 +929,8 @@ export class ScheduleEditor {
                 return this.#iconSpecFromSvg(ICONS.noisePink);
             case 3:
                 return this.#iconSpecFromSvg(ICONS.noiseWhite);
+            case 4:
+                return this.#iconSpecFromSvg(ICONS.noiseBrown);
             case 2: {
                 const recorded = this.#buildRecordedOption(voice.file, voice.description?.trim());
                 return recorded?.icon || this.#iconSpecFromSvg(ICONS.sample);
