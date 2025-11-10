@@ -10,6 +10,8 @@ const AXIS_POINTER_STYLE = {
     }
 };
 
+const MIN_ENTRY_DURATION = 1;
+
 const ICONS = {
     binaural: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4a5 5 0 0 0-5 5v6a4 4 0 0 0 4 4h1a1 1 0 0 0 1-1V9a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v9a1 1 0 0 0 1 1h1a4 4 0 0 0 4-4V9a5 5 0 0 0-5-5H7z"/></svg>',
     noisePink: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 18c2.5-4 5-6 8-6s5.5 2 8 6l-1.6 1.2C16.3 16 14.4 14.8 12 14.8c-2.4 0-4.3 1.2-6.4 4.4z"/><path fill="currentColor" opacity="0.5" d="M4 6c2.5 4 5 6 8 6s5.5-2 8-6l-1.6-1.2C16.3 8 14.4 9.2 12 9.2c-2.4 0-4.3-1.2-6.4-4.4z"/></svg>',
@@ -49,6 +51,82 @@ const percentToVolume = (value) => {
     return (percent / 100) * VOLUME_MAX;
 };
 
+const clampValue = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const distanceSquared = (a, b) => {
+    const dx = a[0] - b[0];
+    const dy = a[1] - b[1];
+    return dx * dx + dy * dy;
+};
+
+const distanceToSegmentSquared = (p, v, w) => {
+    const l2 = distanceSquared(v, w);
+    if (l2 === 0) return distanceSquared(p, v);
+    let t = ((p[0] - v[0]) * (w[0] - v[0]) + (p[1] - v[1]) * (w[1] - v[1])) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const projection = [v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1])];
+    return { distance: distanceSquared(p, projection), t };
+};
+
+const FIELD_CONFIGS = {
+    basefreq: {
+        key: 'basefreq',
+        label: 'Base Frequency',
+        axisGroup: 'base',
+        color: '#8fcbff',
+        symbol: 'circle',
+        supportedTypes: new Set([0]),
+        min: 20,
+        max: 20000,
+        toChart: (value) => value,
+        fromChart: (value) => clampValue(Number(value) || 0, 20, 20000),
+        format: (value) => clampValue(Number(value) || 0, 20, 20000)
+    },
+    beatfreq: {
+        key: 'beatfreq',
+        label: 'Beat Frequency',
+        axisGroup: 'beat',
+        color: '#c084fc',
+        symbol: 'diamond',
+        supportedTypes: new Set([0]),
+        min: 0,
+        max: 25,
+        toChart: (value) => value,
+        fromChart: (value) => clampValue(Number(value) || 0, 0, 25),
+        format: (value) => clampValue(Number(value) || 0, 0, 25)
+    },
+    volL: {
+        key: 'volL',
+        label: 'Left Volume',
+        axisGroup: 'volume',
+        color: '#34d399',
+        symbol: 'rect',
+        supportedTypes: new Set([0, 1, 2, 3]),
+        min: 0,
+        max: 100,
+        toChart: (value) => volumeToPercent(value),
+        fromChart: (value) => percentToVolume(clampValue(Number(value) || 0, 0, 100)),
+        format: (value) => clampValue(Number(value) || 0, 0, VOLUME_MAX),
+        areaColor: 'rgba(52, 211, 153, 0.12)'
+    },
+    volR: {
+        key: 'volR',
+        label: 'Right Volume',
+        axisGroup: 'volume',
+        color: '#f472b6',
+        symbol: 'triangle',
+        supportedTypes: new Set([0, 1, 2, 3]),
+        min: 0,
+        max: 100,
+        toChart: (value) => volumeToPercent(value),
+        fromChart: (value) => percentToVolume(clampValue(Number(value) || 0, 0, 100)),
+        format: (value) => clampValue(Number(value) || 0, 0, VOLUME_MAX),
+        areaColor: 'rgba(244, 114, 182, 0.12)'
+    }
+};
+
+const getFieldConfig = (field) => FIELD_CONFIGS[field];
+
 const ensureEntries = (voice) => {
     const isBinaural = Number(voice.type) === 0;
     const defaultBase = isBinaural ? 220 : 0;
@@ -83,6 +161,10 @@ export class ScheduleEditor {
         this.downloadButton = document.getElementById('editorDownload');
         this.voiceList = document.getElementById('editorVoiceList');
         this.charts = new Map();
+    this.voiceViews = new Map();
+    this.activeHighlight = null;
+    this.dragState = null;
+    this.lastHighlightAction = null;
         this.chartGroupId = `voice-editor-${Date.now()}`;
         this.currentData = null;
         this.timelineLength = 600;
@@ -118,6 +200,10 @@ export class ScheduleEditor {
         this.currentData = null;
         this.timelineLength = 600;
         this.openMenu = null;
+        this.voiceViews.clear();
+        this.activeHighlight = null;
+        this.dragState = null;
+        this.lastHighlightAction = null;
     }
 
     #bindEvents() {
@@ -166,6 +252,7 @@ export class ScheduleEditor {
         if (!this.voiceList || !this.currentData) return;
         this.#disposeCharts();
         this.voiceList.innerHTML = '';
+        this.voiceViews.clear();
         const voices = this.currentData.voices || [];
         if (!voices.length) {
             const empty = document.createElement('div');
@@ -174,20 +261,35 @@ export class ScheduleEditor {
             this.voiceList.appendChild(empty);
             return;
         }
+        const fragment = document.createDocumentFragment();
         voices.forEach((voice, index) => {
             ensureEntries(voice);
-            const card = this.#createVoiceCard(voice, index);
-            this.voiceList.appendChild(card);
-            const chartEl = card.querySelector('.voice-chart');
-            if (chartEl) {
-                this.#renderVoiceChart(index, voice, chartEl);
+            const view = this.#createVoiceCard(voice, index);
+            if (!view) return;
+            this.voiceViews.set(index, view);
+            fragment.appendChild(view.card);
+            if (view.chartElement) {
+                this.#renderVoiceChart(view);
             }
         });
+        this.voiceList.appendChild(fragment);
         this.#connectCharts();
     }
 
     #createVoiceCard(voice, index) {
-        const card = document.createElement('article');
+        const view = {
+            index,
+            voice,
+            card: document.createElement('article'),
+            chartElement: null,
+            entriesContainer: null,
+            entryRows: [],
+            inputMap: new Map(),
+            chart: null,
+            dataset: null,
+            seriesMeta: new Map()
+        };
+        const { card } = view;
         card.className = 'voice-card';
         card.dataset.index = String(index);
 
@@ -221,14 +323,32 @@ export class ScheduleEditor {
         const chartWrapper = document.createElement('div');
         chartWrapper.className = 'voice-chart';
         body.appendChild(chartWrapper);
+        view.chartElement = chartWrapper;
 
+        const details = document.createElement('details');
+        details.className = 'voice-details';
+        const summary = document.createElement('summary');
+        summary.className = 'voice-details-summary';
+        summary.innerHTML = '<span class="summary-icon" aria-hidden="true"></span><span>Details</span>';
+        details.appendChild(summary);
+
+        const detailsContent = document.createElement('div');
+        detailsContent.className = 'voice-details-content';
         const entriesContainer = document.createElement('div');
         entriesContainer.className = 'voice-entries';
+        view.entriesContainer = entriesContainer;
         (voice.entries || []).forEach((entry, entryIndex) => {
-            const row = this.#createEntryRow(voice, index, entry, entryIndex);
-            entriesContainer.appendChild(row);
+            const entryView = this.#createEntryRow(view, voice, index, entry, entryIndex);
+            entriesContainer.appendChild(entryView.row);
+            view.entryRows[entryIndex] = entryView;
         });
-        body.appendChild(entriesContainer);
+        detailsContent.appendChild(entriesContainer);
+        details.appendChild(detailsContent);
+        detailsContent.style.height = '0px';
+        details.addEventListener('toggle', () => this.#animateDetails(details, detailsContent));
+        view.detailsElement = details;
+        view.detailsContent = detailsContent;
+        body.appendChild(details);
 
         const footer = document.createElement('div');
         footer.className = 'voice-card-footer';
@@ -248,57 +368,70 @@ export class ScheduleEditor {
 
         body.appendChild(footer);
         card.appendChild(body);
-        return card;
+        return view;
     }
 
-    #createEntryRow(voice, voiceIndex, entry, entryIndex) {
+    #createEntryRow(view, voice, voiceIndex, entry, entryIndex) {
         const row = document.createElement('div');
         row.className = 'entry-row';
-        const duration = document.createElement('label');
-        duration.textContent = 'Duration (s)';
+        row.dataset.entryIndex = String(entryIndex);
+        const entryInputs = {};
+
+        const bindFocusHighlight = (input, fieldKey) => {
+            input.addEventListener('focus', () => this.#highlightEntry(voiceIndex, entryIndex, { field: fieldKey }));
+            input.addEventListener('blur', () => {
+                if (this.activeHighlight?.voiceIndex === voiceIndex && this.activeHighlight?.entryIndex === entryIndex) {
+                    this.#clearHighlight();
+                }
+            });
+        };
+
+        const durationLabel = document.createElement('label');
+        durationLabel.textContent = 'Duration (s)';
         const durationInput = document.createElement('input');
         durationInput.type = 'number';
         durationInput.min = '1';
-        durationInput.value = Math.max(1, Math.round(entry.duration || 0));
-        durationInput.addEventListener('change', (event) => {
-            const value = Math.max(1, Number(event.target.value) || 1);
-            event.target.value = value;
-            this.#updateEntryValue(voiceIndex, entryIndex, 'duration', value);
+        durationInput.step = '0.1';
+        durationInput.value = Number(entry.duration || 0).toFixed(1);
+        bindFocusHighlight(durationInput, 'duration');
+        durationInput.addEventListener('input', (event) => {
+            this.#handleDurationInput(voiceIndex, entryIndex, event.target);
         });
-        duration.appendChild(durationInput);
-        row.appendChild(duration);
+        durationLabel.appendChild(durationInput);
+        row.appendChild(durationLabel);
+        entryInputs.duration = durationInput;
 
-        const volL = document.createElement('label');
-        volL.textContent = 'Left Volume (%)';
+        const volLLabel = document.createElement('label');
+        volLLabel.textContent = 'Left Volume (%)';
         const volLInput = document.createElement('input');
         volLInput.type = 'number';
         volLInput.min = '0';
         volLInput.max = '100';
         volLInput.step = '1';
         volLInput.value = Math.round(volumeToPercent(entry.volL));
-        volLInput.addEventListener('change', (event) => {
-            const value = Math.max(0, Math.min(100, Number(event.target.value) || 0));
-            event.target.value = value;
-            this.#updateEntryValue(voiceIndex, entryIndex, 'volL', percentToVolume(value));
+        bindFocusHighlight(volLInput, 'volL');
+        volLInput.addEventListener('input', (event) => {
+            this.#handleEntryFieldInput(voiceIndex, entryIndex, 'volL', event.target);
         });
-        volL.appendChild(volLInput);
-        row.appendChild(volL);
+        volLLabel.appendChild(volLInput);
+        row.appendChild(volLLabel);
+        entryInputs.volL = volLInput;
 
-        const volR = document.createElement('label');
-        volR.textContent = 'Right Volume (%)';
+        const volRLabel = document.createElement('label');
+        volRLabel.textContent = 'Right Volume (%)';
         const volRInput = document.createElement('input');
         volRInput.type = 'number';
         volRInput.min = '0';
         volRInput.max = '100';
         volRInput.step = '1';
         volRInput.value = Math.round(volumeToPercent(entry.volR));
-        volRInput.addEventListener('change', (event) => {
-            const value = Math.max(0, Math.min(100, Number(event.target.value) || 0));
-            event.target.value = value;
-            this.#updateEntryValue(voiceIndex, entryIndex, 'volR', percentToVolume(value));
+        bindFocusHighlight(volRInput, 'volR');
+        volRInput.addEventListener('input', (event) => {
+            this.#handleEntryFieldInput(voiceIndex, entryIndex, 'volR', event.target);
         });
-        volR.appendChild(volRInput);
-        row.appendChild(volR);
+        volRLabel.appendChild(volRInput);
+        row.appendChild(volRLabel);
+        entryInputs.volR = volRInput;
 
         if (Number(voice.type) === 0) {
             const baseLabel = document.createElement('label');
@@ -306,14 +439,15 @@ export class ScheduleEditor {
             const baseInput = document.createElement('input');
             baseInput.type = 'number';
             baseInput.min = '20';
-            baseInput.value = Math.max(20, Math.round(entry.basefreq || 0));
-            baseInput.addEventListener('change', (event) => {
-                const value = Math.max(20, Number(event.target.value) || 20);
-                event.target.value = value;
-                this.#updateEntryValue(voiceIndex, entryIndex, 'basefreq', value);
+            baseInput.step = '0.1';
+            baseInput.value = Number(entry.basefreq || 0).toFixed(1);
+            bindFocusHighlight(baseInput, 'basefreq');
+            baseInput.addEventListener('input', (event) => {
+                this.#handleEntryFieldInput(voiceIndex, entryIndex, 'basefreq', event.target);
             });
             baseLabel.appendChild(baseInput);
             row.appendChild(baseLabel);
+            entryInputs.basefreq = baseInput;
 
             const beatLabel = document.createElement('label');
             beatLabel.textContent = 'Beat Frequency (Hz)';
@@ -323,13 +457,13 @@ export class ScheduleEditor {
             beatInput.max = '25';
             beatInput.step = '0.1';
             beatInput.value = Number(entry.beatfreq || 0).toFixed(1);
-            beatInput.addEventListener('change', (event) => {
-                const value = Math.max(0, Math.min(25, Number(event.target.value) || 0));
-                event.target.value = value.toFixed(1);
-                this.#updateEntryValue(voiceIndex, entryIndex, 'beatfreq', value);
+            bindFocusHighlight(beatInput, 'beatfreq');
+            beatInput.addEventListener('input', (event) => {
+                this.#handleEntryFieldInput(voiceIndex, entryIndex, 'beatfreq', event.target);
             });
             beatLabel.appendChild(beatInput);
             row.appendChild(beatLabel);
+            entryInputs.beatfreq = beatInput;
         }
 
         const actions = document.createElement('div');
@@ -341,7 +475,118 @@ export class ScheduleEditor {
         removeBtn.addEventListener('click', () => this.#removeEntry(voiceIndex, entryIndex));
         actions.appendChild(removeBtn);
         row.appendChild(actions);
-        return row;
+
+        Object.entries(entryInputs).forEach(([fieldKey, input]) => {
+            view.inputMap.set(`${entryIndex}:${fieldKey}`, input);
+        });
+
+        return { row, inputs: entryInputs, entryIndex };
+    }
+
+    #getVoiceFields(voice) {
+        const type = Number(voice?.type ?? 0);
+        return Object.values(FIELD_CONFIGS).filter((config) => config.supportedTypes.has(type));
+    }
+
+    #getDefaultFieldValue(fieldKey) {
+        switch (fieldKey) {
+            case 'basefreq':
+                return 220;
+            case 'beatfreq':
+                return 4;
+            case 'volL':
+            case 'volR':
+                return 0.7;
+            default:
+                return 0;
+        }
+    }
+
+    #getEntryFieldValue(entry, fieldKey) {
+        if (!entry) return this.#getDefaultFieldValue(fieldKey);
+        switch (fieldKey) {
+            case 'basefreq':
+            case 'beatfreq':
+                return Number(entry[fieldKey] ?? this.#getDefaultFieldValue(fieldKey));
+            case 'volL':
+            case 'volR':
+                return Number(entry[fieldKey] ?? 0.7);
+            default:
+                return Number(entry[fieldKey] ?? 0);
+        }
+    }
+
+    #calculateEntryStarts(voice) {
+        const entries = voice.entries || [];
+        const starts = [];
+        let total = 0;
+        entries.forEach((entry) => {
+            starts.push(total);
+            total += Math.max(0, Number(entry.duration || 0));
+        });
+        return { starts, total };
+    }
+
+    #buildVoiceDataset(voice) {
+        const fields = this.#getVoiceFields(voice);
+        const { starts, total } = this.#calculateEntryStarts(voice);
+        const entries = voice.entries || [];
+        const timelineEnd = Math.max(total, this.timelineLength);
+        const pointsByField = new Map();
+
+        fields.forEach((config) => {
+            const points = [];
+            if (!entries.length) {
+                const fallback = this.#getDefaultFieldValue(config.key);
+                points.push({
+                    time: 0,
+                    value: fallback,
+                    chartValue: config.toChart(fallback),
+                    entryIndex: 0,
+                    isEnd: false
+                });
+                points.push({
+                    time: timelineEnd,
+                    value: fallback,
+                    chartValue: config.toChart(fallback),
+                    entryIndex: 0,
+                    isEnd: true
+                });
+            } else {
+                entries.forEach((entry, entryIndex) => {
+                    const value = this.#getEntryFieldValue(entry, config.key);
+                    points.push({
+                        time: starts[entryIndex],
+                        value,
+                        chartValue: config.toChart(value),
+                        entryIndex,
+                        isEnd: false
+                    });
+                });
+                const lastIndex = entries.length - 1;
+                const lastValue = this.#getEntryFieldValue(entries[lastIndex], config.key);
+                points.push({
+                    time: timelineEnd,
+                    value: lastValue,
+                    chartValue: config.toChart(lastValue),
+                    entryIndex: lastIndex,
+                    isEnd: true
+                });
+            }
+            pointsByField.set(config.key, points);
+        });
+
+        return {
+            fields,
+            pointsByField,
+            starts,
+            timelineEnd,
+            totalDuration: total
+        };
+    }
+
+    #seriesId(index, fieldKey) {
+        return `voice-${index}-${fieldKey}`;
     }
 
     #createVoiceTypeSelector(voice, index) {
@@ -449,7 +694,13 @@ export class ScheduleEditor {
         const voice = this.currentData.voices[voiceIndex];
         if (!voice.entries?.[entryIndex]) return;
         voice.entries[entryIndex][key] = value;
-        this.#renderVoices();
+        if (key === 'duration') {
+            this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice());
+            if (this.lengthInput) {
+                this.lengthInput.value = Math.round(this.timelineLength);
+            }
+        }
+        this.#updateVoiceView(voiceIndex, { rebuild: key === 'duration', keepInputs: false });
     }
 
     #addVoice() {
@@ -583,209 +834,714 @@ export class ScheduleEditor {
         }
     }
 
-    #buildPoints(voice) {
-        const points = [];
-        let time = 0;
-        let lastBase = 220;
-        let lastBeat = 4;
-        let lastVolL = 0.7;
-        let lastVolR = 0.7;
-        (voice.entries || []).forEach((entry) => {
-            const base = Number(entry.basefreq ?? lastBase);
-            const beat = Number(entry.beatfreq ?? lastBeat);
-            const volL = Number(entry.volL ?? lastVolL);
-            const volR = Number(entry.volR ?? lastVolR);
-            points.push({ time, base, beat, volL, volR });
-            time += Number(entry.duration || 0);
-            lastBase = base;
-            lastBeat = beat;
-            lastVolL = volL;
-            lastVolR = volR;
-        });
-        const endTime = Math.max(time, this.timelineLength);
-        if (!points.length) {
-            points.push({ time: 0, base: 220, beat: 4, volL: 0.7, volR: 0.7 });
-        }
-        const lastPoint = points[points.length - 1];
-        if (!lastPoint || lastPoint.time !== endTime) {
-            points.push({
-                time: endTime,
-                base: lastPoint?.base ?? 220,
-                beat: lastPoint?.beat ?? 4,
-                volL: lastPoint?.volL ?? 0.7,
-                volR: lastPoint?.volR ?? 0.7
-            });
-        } else if (lastPoint.time < endTime) {
-            points.push({
-                time: endTime,
-                base: lastPoint.base,
-                beat: lastPoint.beat,
-                volL: lastPoint.volL,
-                volR: lastPoint.volR
-            });
-        }
-        return points;
+    #renderVoiceChart(view) {
+        if (typeof echarts === 'undefined' || !view?.chartElement) return;
+        const chart = echarts.init(view.chartElement, null, { renderer: 'canvas' });
+        chart.group = this.chartGroupId;
+        view.chart = chart;
+        this.charts.set(view.index, chart);
+        this.#updateVoiceChart(view, { rebuild: true });
+        this.#setupChartInteractions(view);
     }
 
-    #renderVoiceChart(index, voice, element) {
-        if (typeof echarts === 'undefined' || !element) return;
-        const chart = echarts.init(element, null, { renderer: 'canvas' });
-        chart.group = this.chartGroupId;
-        const points = this.#buildPoints(voice);
-        const xMax = points[points.length - 1]?.time || this.timelineLength;
-        const baseValues = points.map((p) => Number.isFinite(p.base) ? p.base : 0);
-        const beatValues = points.map((p) => Number.isFinite(p.beat) ? p.beat : 0);
-        const volLValues = points.map((p) => volumeToPercent(p.volL));
-        const volRValues = points.map((p) => volumeToPercent(p.volR));
-        let option;
-        if (Number(voice.type) === 0) {
-            const maxBase = Math.min(20000, Math.max(20, ...baseValues, 20) * 1.1);
-            let minBase = Math.max(20, Math.min(...baseValues, maxBase));
-            if (maxBase - minBase < 20) {
-                minBase = Math.max(20, maxBase - 20);
+    #updateVoiceChart(view, { rebuild = false } = {}) {
+        const voice = this.currentData?.voices?.[view.index];
+        if (!voice || !view?.chart) return;
+        view.voice = voice;
+        const dataset = this.#buildVoiceDataset(voice);
+        view.dataset = dataset;
+
+        const option = this.#composeChartOption(view, dataset, { rebuild });
+        view.chart.setOption(option, rebuild, true);
+
+        this.#updateSeriesMeta(view, dataset);
+        this.#refreshSeriesPixels(view);
+        if (this.activeHighlight?.voiceIndex === view.index) {
+            this.#applyHighlightState();
+        }
+    }
+
+    #setupChartInteractions(view) {
+        if (!view?.chart) return;
+        const zr = view.chart.getZr();
+        if (view.interactionHandlers) {
+            Object.entries(view.interactionHandlers).forEach(([event, handler]) => {
+                zr.off(event, handler);
+            });
+        }
+        const handlers = {
+            mousemove: (event) => this.#handleChartMouseMove(view, event),
+            mouseout: () => this.#handleChartMouseOut(view),
+            mousedown: (event) => this.#handleChartMouseDown(view, event),
+            mouseup: (event) => this.#handleChartMouseUp(view, event),
+            dblclick: (event) => this.#handleChartDoubleClick(view, event)
+        };
+        zr.on('mousemove', handlers.mousemove);
+        zr.on('mouseout', handlers.mouseout);
+        zr.on('mousedown', handlers.mousedown);
+        zr.on('mouseup', handlers.mouseup);
+        zr.on('dblclick', handlers.dblclick);
+        view.interactionHandlers = handlers;
+    }
+
+    #handleChartMouseMove(view, event) {
+        const pointer = [event.offsetX, event.offsetY];
+        if (this.dragState && this.dragState.view === view) {
+            this.#performDrag(pointer);
+            return;
+        }
+        const hit = this.#resolveChartHit(view, pointer, { includeSegments: true });
+        if (!hit) {
+            if (this.activeHighlight?.voiceIndex === view.index) {
+                this.#clearHighlight();
             }
-            option = {
-                animation: false,
-                grid: { left: 70, right: 70, top: 24, bottom: 36 },
-                xAxis: {
-                    type: 'value',
-                    min: 0,
-                    max: Math.max(xMax, MIN_TIMELINE_SECONDS),
-                    axisLabel: { formatter: (value) => formatSeconds(value) },
-                    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
-                    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } }
-                },
-                yAxis: [
-                    {
-                        type: 'value',
-                        min: minBase,
-                        max: maxBase,
-                        name: 'Base Hz',
-                        axisLine: { lineStyle: { color: '#8fcbff' } },
-                        axisLabel: { color: 'rgba(255,255,255,0.75)' },
-                        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
-                    },
-                    {
-                        type: 'value',
-                        min: 0,
-                        max: 25,
-                        position: 'right',
-                        name: 'Beat Hz',
-                        axisLine: { lineStyle: { color: '#c084fc' } },
-                        axisLabel: { color: 'rgba(255,255,255,0.75)' },
-                        splitLine: { show: false }
-                    },
-                    {
-                        type: 'value',
-                        min: 0,
-                        max: 100,
-                        show: false
-                    }
-                ],
-                tooltip: { show: false },
-                axisPointer: {
-                    link: [{ xAxisIndex: 'all' }],
-                    triggerTooltip: false,
-                    ...AXIS_POINTER_STYLE
-                },
-                series: [
-                    {
-                        type: 'line',
-                        name: 'Base Frequency',
-                        yAxisIndex: 0,
-                        data: points.map((p) => [p.time, p.base]),
-                        step: 'end',
-                        symbol: 'circle',
-                        symbolSize: 8,
-                        lineStyle: { color: '#8fcbff', width: 2 }
-                    },
-                    {
-                        type: 'line',
-                        name: 'Beat Frequency',
-                        yAxisIndex: 1,
-                        data: points.map((p) => [p.time, p.beat]),
-                        step: 'end',
-                        symbol: 'diamond',
-                        symbolSize: 7,
-                        lineStyle: { color: '#c084fc', width: 2 }
-                    },
-                    {
-                        type: 'line',
-                        name: 'Left Volume',
-                        yAxisIndex: 2,
-                        data: points.map((p, i) => [p.time, volLValues[i]]),
-                        step: 'end',
-                        symbol: 'rect',
-                        symbolSize: 7,
-                        lineStyle: { color: '#34d399', width: 2 },
-                        areaStyle: { color: 'rgba(52, 211, 153, 0.12)' }
-                    },
-                    {
-                        type: 'line',
-                        name: 'Right Volume',
-                        yAxisIndex: 2,
-                        data: points.map((p, i) => [p.time, volRValues[i]]),
-                        step: 'end',
-                        symbol: 'triangle',
-                        symbolSize: 7,
-                        lineStyle: { color: '#f472b6', width: 2 },
-                        areaStyle: { color: 'rgba(244, 114, 182, 0.12)' }
-                    }
-                ]
+            view.chart.getZr().setCursorStyle('default');
+            return;
+        }
+        if (hit.type === 'point') {
+            view.chart.getZr().setCursorStyle('grab');
+            if (
+                this.activeHighlight?.voiceIndex !== view.index ||
+                this.activeHighlight?.entryIndex !== hit.entryIndex ||
+                this.activeHighlight?.field !== hit.fieldKey
+            ) {
+                this.#highlightEntry(view.index, hit.entryIndex, { field: hit.fieldKey });
+            }
+        } else if (hit.type === 'segment') {
+            view.chart.getZr().setCursorStyle('grab');
+            if (
+                this.activeHighlight?.voiceIndex !== view.index ||
+                this.activeHighlight?.entryIndex !== hit.startEntryIndex ||
+                this.activeHighlight?.field !== hit.fieldKey
+            ) {
+                this.#highlightEntry(view.index, hit.startEntryIndex, { field: hit.fieldKey });
+            }
+        }
+    }
+
+    #handleChartMouseOut(view) {
+        if (this.dragState && this.dragState.view === view) return;
+        this.#clearHighlight();
+        view.chart.getZr().setCursorStyle('default');
+    }
+
+    #handleChartMouseDown(view, event) {
+        const pointer = [event.offsetX, event.offsetY];
+        const hit = this.#resolveChartHit(view, pointer, { includeSegments: true });
+        if (!hit) return;
+        view.chart.getZr().setCursorStyle('grabbing');
+        if (hit.type === 'point') {
+            const meta = view.seriesByField?.get(hit.fieldKey);
+            const point = meta?.points?.[hit.pointIndex];
+            this.#highlightEntry(view.index, hit.entryIndex, { field: hit.fieldKey });
+            this.dragState = {
+                type: 'point',
+                view,
+                fieldKey: hit.fieldKey,
+                entryIndex: hit.entryIndex,
+                pointIndex: hit.pointIndex,
+                startPointer: pointer,
+                startValue: point?.value,
+                startTime: point?.time,
+                startDurations: this.#calculateEntryStarts(view.voice)
             };
-        } else {
-            option = {
-                animation: false,
-                grid: { left: 60, right: 40, top: 24, bottom: 36 },
-                xAxis: {
+        } else if (hit.type === 'segment') {
+            const meta = view.seriesByField?.get(hit.fieldKey);
+            const config = meta?.config;
+            const startChart = config ? config.toChart(hit.startPoint.value) : hit.startPoint.value;
+            const endChart = config ? config.toChart(hit.endPoint.value) : hit.endPoint.value;
+            const initialPointerChart = startChart + (endChart - startChart) * hit.ratio;
+            this.#highlightEntry(view.index, hit.startEntryIndex, { field: hit.fieldKey });
+            this.dragState = {
+                type: 'segment',
+                view,
+                fieldKey: hit.fieldKey,
+                startEntryIndex: hit.startEntryIndex,
+                endEntryIndex: hit.endEntryIndex,
+                startPointer: pointer,
+                segment: hit,
+                initialPointerChart,
+                initialPointerActual:
+                    config && config.axisGroup === 'volume'
+                        ? config.fromChart(initialPointerChart)
+                        : initialPointerChart
+            };
+        }
+    }
+
+    #handleChartMouseUp(view) {
+        if (this.dragState?.view !== view) return;
+        this.dragState = null;
+        view.chart.getZr().setCursorStyle('default');
+        this.#updateVoiceView(view.index, { rebuild: true, keepInputs: false });
+    }
+
+    #handleChartDoubleClick(view, event) {
+        const pointer = [event.offsetX, event.offsetY];
+        const hit = this.#resolveChartHit(view, pointer, { includeSegments: true, preferSegments: true });
+        if (!hit || hit.type !== 'segment') return;
+        this.#insertKeyframeAt(view, hit, pointer);
+    }
+
+    #resolveChartHit(view, pointer, { includeSegments = false, preferSegments = false } = {}) {
+        if (!view?.seriesMeta) return null;
+        const pointThreshold = 144; // 12px squared
+        const segmentThreshold = 196; // 14px squared
+        let bestPoint = null;
+        let bestPointDist = pointThreshold;
+        view.seriesMeta.forEach((meta, seriesId) => {
+            meta.pointPixels?.forEach((pixel, index) => {
+                const dataPoint = meta.points[index];
+                if (!dataPoint || dataPoint.isEnd) return;
+                const dist = distanceSquared(pointer, pixel);
+                if (dist <= bestPointDist) {
+                    bestPointDist = dist;
+                    bestPoint = {
+                        type: 'point',
+                        seriesId,
+                        fieldKey: meta.config.key,
+                        entryIndex: dataPoint.entryIndex,
+                        pointIndex: index
+                    };
+                }
+            });
+        });
+
+        let bestSegment = null;
+        let bestSegmentDist = segmentThreshold;
+        if (includeSegments) {
+            view.seriesMeta.forEach((meta, seriesId) => {
+                meta.segments?.forEach((segment) => {
+                    const { distance, t } = distanceToSegmentSquared(pointer, segment.startPixel, segment.endPixel);
+                    if (distance <= bestSegmentDist) {
+                        bestSegmentDist = distance;
+                        bestSegment = {
+                            type: 'segment',
+                            seriesId,
+                            fieldKey: meta.config.key,
+                            startEntryIndex: segment.startPoint.entryIndex,
+                            endEntryIndex: segment.endPoint.entryIndex,
+                            startPoint: segment.startPoint,
+                            endPoint: segment.endPoint,
+                            ratio: t
+                        };
+                    }
+                });
+            });
+        }
+
+        if (preferSegments && bestSegment) return bestSegment;
+        return bestPoint || bestSegment;
+    }
+
+    #performDrag(pointer) {
+        if (!this.dragState) return;
+        const { view } = this.dragState;
+        const meta = view.seriesByField?.get(this.dragState.fieldKey);
+        if (!meta) return;
+        const dataCoord = view.chart.convertFromPixel({ xAxisIndex: 0, yAxisIndex: meta.axisIndex }, pointer);
+        const [timeValue, chartValue] = dataCoord;
+        if (this.dragState.type === 'point') {
+            this.#applyPointDrag(timeValue, chartValue);
+        } else if (this.dragState.type === 'segment') {
+            this.#applySegmentDrag(chartValue);
+        }
+        this.#updateVoiceView(view.index, { rebuild: false, keepInputs: true });
+        this.#highlightEntry(view.index, this.dragState.type === 'point' ? this.dragState.entryIndex : this.dragState.startEntryIndex, { field: this.dragState.fieldKey });
+    }
+
+    #applyPointDrag(timeValue, chartValue) {
+        const state = this.dragState;
+        const voice = state?.view?.voice;
+        if (!state || !voice) return;
+        const meta = state.view.seriesByField?.get(state.fieldKey);
+        const config = meta?.config;
+        if (!config) return;
+
+        if (Number.isFinite(timeValue)) {
+            this.#setEntryStartTime(voice, state.entryIndex, timeValue);
+        }
+
+        if (Number.isFinite(chartValue)) {
+            const bounded = clampValue(chartValue, config.min, config.max);
+            const actualValue = config.axisGroup === 'volume' ? config.fromChart(bounded) : config.format(bounded);
+            voice.entries[state.entryIndex][state.fieldKey] = actualValue;
+        }
+    }
+
+    #applySegmentDrag(chartValue) {
+        const state = this.dragState;
+        const voice = state?.view?.voice;
+        if (!state || !voice) return;
+        const meta = state.view.seriesByField?.get(state.fieldKey);
+        const config = meta?.config;
+        if (!config) return;
+
+        if (!Number.isFinite(chartValue)) return;
+        const bounded = clampValue(chartValue, config.min, config.max);
+        const deltaChart = bounded - state.initialPointerChart;
+        const deltaActual =
+            config.axisGroup === 'volume'
+                ? config.fromChart(state.initialPointerChart + deltaChart) - state.initialPointerActual
+                : deltaChart;
+
+        const applyDelta = (entryIndex) => {
+            if (!voice.entries?.[entryIndex]) return;
+            if (config.axisGroup === 'volume') {
+                const current = voice.entries[entryIndex][state.fieldKey];
+                voice.entries[entryIndex][state.fieldKey] = clampValue(current + deltaActual, 0, VOLUME_MAX);
+            } else {
+                const current = voice.entries[entryIndex][state.fieldKey];
+                voice.entries[entryIndex][state.fieldKey] = clampValue(current + deltaChart, config.min, config.max);
+            }
+        };
+
+        applyDelta(state.startEntryIndex);
+        applyDelta(state.endEntryIndex);
+
+        state.initialPointerChart = bounded;
+        state.initialPointerActual =
+            config.axisGroup === 'volume' ? config.fromChart(bounded) : bounded;
+    }
+
+    #insertKeyframeAt(view, segmentHit, pointer) {
+        const voice = this.currentData?.voices?.[view.index];
+        if (!voice) return;
+        const meta = view.seriesByField?.get(segmentHit.fieldKey);
+        if (!meta) return;
+        const dataCoord = view.chart.convertFromPixel({ xAxisIndex: 0, yAxisIndex: meta.axisIndex }, pointer);
+        const [timeValue, chartValue] = dataCoord;
+        if (!Number.isFinite(timeValue) || !Number.isFinite(chartValue)) return;
+
+        const { starts } = this.#calculateEntryStarts(voice);
+        const startTime = starts[segmentHit.startEntryIndex] ?? 0;
+        const endTime = starts[segmentHit.endEntryIndex] ?? (startTime + Number(voice.entries[segmentHit.startEntryIndex]?.duration || 0));
+        const clampedTime = clampValue(timeValue, startTime + MIN_ENTRY_DURATION, endTime - MIN_ENTRY_DURATION);
+        const ratio = (clampedTime - startTime) / Math.max(MIN_ENTRY_DURATION, endTime - startTime);
+
+        const config = meta.config;
+        const startValue = segmentHit.startPoint.value;
+        const endValue = segmentHit.endPoint.value;
+        const interpolatedChart = startValue + (endValue - startValue) * ratio;
+        const boundedChart = clampValue(Number.isFinite(chartValue) ? chartValue : interpolatedChart, config.min, config.max);
+        const actualValue = config.axisGroup === 'volume' ? config.fromChart(boundedChart) : config.format(boundedChart);
+
+        const entryDuration = Number(voice.entries[segmentHit.startEntryIndex]?.duration || MIN_ENTRY_DURATION);
+        const firstDuration = Math.max(MIN_ENTRY_DURATION, clampedTime - startTime);
+        const secondDuration = Math.max(MIN_ENTRY_DURATION, endTime - clampedTime);
+        voice.entries[segmentHit.startEntryIndex].duration = firstDuration;
+
+        const startEntry = voice.entries[segmentHit.startEntryIndex];
+        const endEntry = voice.entries[segmentHit.endEntryIndex];
+        const newEntry = { duration: secondDuration };
+        const fields = this.#getVoiceFields(voice);
+        fields.forEach((cfg) => {
+            const startVal = this.#getEntryFieldValue(startEntry, cfg.key);
+            const endVal = this.#getEntryFieldValue(endEntry, cfg.key);
+            const interpolated = startVal + (endVal - startVal) * ratio;
+            if (cfg.axisGroup === 'volume') {
+                newEntry[cfg.key] = clampValue(interpolated, 0, VOLUME_MAX);
+            } else {
+                newEntry[cfg.key] = clampValue(interpolated, cfg.min, cfg.max);
+            }
+        });
+        newEntry[segmentHit.fieldKey] = actualValue;
+        voice.entries.splice(segmentHit.startEntryIndex + 1, 0, newEntry);
+
+        this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice());
+        if (this.lengthInput) {
+            this.lengthInput.value = Math.round(this.timelineLength);
+        }
+
+        this.#updateVoiceView(view.index, { rebuild: true, keepInputs: false });
+        this.#highlightEntry(view.index, segmentHit.startEntryIndex + 1, { field: segmentHit.fieldKey });
+    }
+
+    #composeChartOption(view, dataset, { rebuild = false } = {}) {
+        const hasTonal = Number(view.voice?.type) === 0;
+        const xMax = Math.max(dataset.timelineEnd, MIN_TIMELINE_SECONDS);
+        const axisOrder = [];
+        dataset.fields.forEach((config) => {
+            if (!axisOrder.includes(config.axisGroup)) {
+                axisOrder.push(config.axisGroup);
+            }
+        });
+        const axisIndexMap = new Map(axisOrder.map((group, idx) => [group, idx]));
+        view.axisIndexMap = axisIndexMap;
+
+        const yAxis = axisOrder.map((group, idx) => this.#buildYAxisConfig(group, dataset, axisOrder.length, idx));
+        const series = dataset.fields.map((config) => {
+            const seriesId = this.#seriesId(view.index, config.key);
+            const dataPoints = dataset.pointsByField.get(config.key) || [];
+            const data = dataPoints.map((point) => [point.time, point.chartValue]);
+            const axisIndex = axisIndexMap.get(config.axisGroup) ?? 0;
+            const baseSeries = {
+                id: seriesId,
+                name: config.label,
+                type: 'line',
+                data,
+                yAxisIndex: axisIndex,
+                symbol: config.symbol,
+                symbolSize: 9,
+                showSymbol: true,
+                smooth: false,
+                connectNulls: true,
+                lineStyle: { color: config.color, width: 2.2 },
+                itemStyle: { color: config.color },
+                emphasis: {
+                    focus: 'series',
+                    scale: 1.35,
+                    itemStyle: { color: config.color },
+                    lineStyle: { width: 3 }
+                },
+                animation: false
+            };
+            if (config.areaColor) {
+                baseSeries.areaStyle = { color: config.areaColor };
+            }
+            return baseSeries;
+        });
+
+        const baseOption = rebuild
+            ? {
+                  animation: false,
+                  grid: hasTonal
+                      ? { left: 70, right: 80, top: 24, bottom: 44 }
+                      : { left: 60, right: 40, top: 24, bottom: 44 },
+                  tooltip: { show: false },
+                  axisPointer: {
+                      link: [{ xAxisIndex: 'all' }],
+                      triggerTooltip: false,
+                      ...AXIS_POINTER_STYLE
+                  }
+              }
+            : {};
+
+        return Object.assign(baseOption, {
+            xAxis: {
+                type: 'value',
+                min: 0,
+                max: xMax,
+                axisLabel: { formatter: (value) => formatSeconds(value) },
+                axisLine: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
+                splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } }
+            },
+            yAxis: yAxis.length === 1 ? yAxis[0] : yAxis,
+            series
+        });
+    }
+
+    #buildYAxisConfig(group, dataset, groupCount, index) {
+        switch (group) {
+            case 'base': {
+                const points = dataset.pointsByField.get('basefreq') || [];
+                const values = points.map((p) => p.chartValue).filter((value) => Number.isFinite(value));
+                const maxVal = Math.min(20000, Math.max(20, ...values, 20) * 1.1);
+                let minVal = Math.max(20, Math.min(...values, maxVal));
+                if (!Number.isFinite(minVal)) {
+                    minVal = 20;
+                }
+                if (maxVal - minVal < 20) {
+                    minVal = Math.max(20, maxVal - 20);
+                }
+                return {
+                    type: 'value',
+                    min: minVal,
+                    max: maxVal,
+                    name: 'Base Hz',
+                    position: 'left',
+                    axisLine: { lineStyle: { color: '#8fcbff' } },
+                    axisLabel: { color: 'rgba(255,255,255,0.75)' },
+                    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+                };
+            }
+            case 'beat':
+                return {
                     type: 'value',
                     min: 0,
-                    max: Math.max(xMax, MIN_TIMELINE_SECONDS),
-                    axisLabel: { formatter: (value) => formatSeconds(value) },
-                    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.25)' } },
-                    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } }
-                },
-                yAxis: {
+                    max: 25,
+                    name: 'Beat Hz',
+                    position: 'right',
+                    axisLine: { lineStyle: { color: '#c084fc' } },
+                    axisLabel: { color: 'rgba(255,255,255,0.75)' },
+                    splitLine: { show: false }
+                };
+            case 'volume':
+            default:
+                return {
                     type: 'value',
                     min: 0,
                     max: 100,
                     name: 'Volume %',
-                    axisLabel: { color: 'rgba(255,255,255,0.75)' },
+                    position: groupCount > 1 ? 'right' : 'left',
+                    offset: groupCount > 2 && index > 0 ? 60 : 0,
                     axisLine: { lineStyle: { color: '#34d399' } },
-                    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } }
-                },
-                tooltip: { show: false },
-                axisPointer: {
-                    link: [{ xAxisIndex: 'all' }],
-                    triggerTooltip: false,
-                    ...AXIS_POINTER_STYLE
-                },
-                series: [
-                    {
-                        type: 'line',
-                        name: 'Left Volume',
-                        data: points.map((p, i) => [p.time, volLValues[i]]),
-                        step: 'end',
-                        symbol: 'rect',
-                        symbolSize: 7,
-                        lineStyle: { color: '#34d399', width: 2 },
-                        areaStyle: { color: 'rgba(52, 211, 153, 0.15)' }
+                    axisLabel: {
+                        color: groupCount > 1 ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.75)'
                     },
-                    {
-                        type: 'line',
-                        name: 'Right Volume',
-                        data: points.map((p, i) => [p.time, volRValues[i]]),
-                        step: 'end',
-                        symbol: 'triangle',
-                        symbolSize: 7,
-                        lineStyle: { color: '#f472b6', width: 2 },
-                        areaStyle: { color: 'rgba(244, 114, 182, 0.12)' }
-                    }
-                ]
-            };
+                    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+                    show: !(groupCount > 1 && index > 0)
+                };
         }
-        chart.setOption(option, true);
-        this.charts.set(index, chart);
+    }
+
+    #updateSeriesMeta(view, dataset) {
+        view.seriesMeta = new Map();
+        view.seriesByField = new Map();
+        dataset.fields.forEach((config) => {
+            const seriesId = this.#seriesId(view.index, config.key);
+            const axisIndex = view.axisIndexMap?.get(config.axisGroup) ?? 0;
+            const points = dataset.pointsByField.get(config.key) || [];
+            const meta = {
+                config,
+                axisGroup: config.axisGroup,
+                axisIndex,
+                points,
+                pointPixels: [],
+                segments: []
+            };
+            view.seriesMeta.set(seriesId, meta);
+            view.seriesByField.set(config.key, meta);
+        });
+    }
+
+    #refreshSeriesPixels(view) {
+        if (!view?.chart || !view.seriesMeta) return;
+        view.seriesMeta.forEach((meta) => {
+            const axisIndex = meta.axisIndex ?? 0;
+            const pixels = meta.points.map((point) =>
+                view.chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: axisIndex }, [point.time, point.chartValue])
+            );
+            meta.pointPixels = pixels;
+            const segments = [];
+            for (let i = 0; i < pixels.length - 1; i += 1) {
+                const startPoint = meta.points[i];
+                const endPoint = meta.points[i + 1];
+                if (!startPoint || !endPoint || endPoint.isEnd) continue;
+                segments.push({
+                    startIndex: i,
+                    endIndex: i + 1,
+                    startPoint,
+                    endPoint,
+                    startPixel: pixels[i],
+                    endPixel: pixels[i + 1]
+                });
+            }
+            meta.segments = segments;
+        });
+    }
+
+    #handleEntryFieldInput(voiceIndex, entryIndex, fieldKey, input) {
+        const voice = this.currentData?.voices?.[voiceIndex];
+        if (!voice?.entries?.[entryIndex]) return;
+        const config = getFieldConfig(fieldKey);
+        if (!config) return;
+        const raw = String(input.value ?? '').trim();
+        if (!raw) return;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) return;
+        const boundedChartValue = clampValue(parsed, config.min, config.max);
+        if (boundedChartValue !== parsed) {
+            input.value = config.axisGroup === 'volume' ? Math.round(boundedChartValue) : boundedChartValue.toFixed(1);
+        }
+        const actualValue = config.axisGroup === 'volume'
+            ? config.fromChart(boundedChartValue)
+            : config.format(boundedChartValue);
+        voice.entries[entryIndex][fieldKey] = actualValue;
+        this.#highlightEntry(voiceIndex, entryIndex, { field: fieldKey });
+        this.#updateVoiceView(voiceIndex, { rebuild: false, keepInputs: true });
+    }
+
+    #handleDurationInput(voiceIndex, entryIndex, input) {
+        const voice = this.currentData?.voices?.[voiceIndex];
+        if (!voice?.entries?.[entryIndex]) return;
+        const raw = String(input.value ?? '').trim();
+        if (!raw) return;
+        let duration = Number(raw);
+        if (!Number.isFinite(duration)) return;
+        duration = Math.max(1, duration);
+        input.value = duration.toFixed(1);
+        voice.entries[entryIndex].duration = duration;
+        this.timelineLength = Math.max(this.timelineLength, this.#calculateLongestVoice());
+        if (this.lengthInput) {
+            this.lengthInput.value = Math.round(this.timelineLength);
+        }
+        this.#highlightEntry(voiceIndex, entryIndex, {});
+        this.#updateVoiceView(voiceIndex, { rebuild: true, keepInputs: true });
+    }
+
+    #updateVoiceView(voiceIndex, { rebuild = false, keepInputs = false } = {}) {
+        const view = this.voiceViews.get(voiceIndex);
+        if (!view) {
+            this.#renderVoices();
+            return;
+        }
+        const voice = this.currentData?.voices?.[voiceIndex];
+        if (!voice) return;
+        view.voice = voice;
+
+        const desiredCount = voice.entries?.length || 0;
+        if (view.entryRows.length !== desiredCount) {
+            view.entriesContainer.innerHTML = '';
+            view.entryRows = [];
+            view.inputMap.clear();
+            (voice.entries || []).forEach((entry, entryIndex) => {
+                const entryView = this.#createEntryRow(view, voice, voiceIndex, entry, entryIndex);
+                view.entriesContainer.appendChild(entryView.row);
+                view.entryRows[entryIndex] = entryView;
+            });
+            if (view.detailsElement?.open) {
+                view.detailsContent.style.height = 'auto';
+            }
+        }
+        this.#updateVoiceChart(view, { rebuild });
+        if (!keepInputs) {
+            this.#refreshEntryInputs(view);
+        }
+    }
+
+    #refreshEntryInputs(view) {
+        const voice = this.currentData?.voices?.[view.index];
+        if (!voice) return;
+        view.entryRows.forEach((entryView) => {
+            if (!entryView) return;
+            const entry = voice.entries?.[entryView.entryIndex];
+            if (!entry) return;
+            const { inputs } = entryView;
+            if (inputs.duration) {
+                inputs.duration.value = Number(entry.duration || 0).toFixed(1);
+            }
+            if (inputs.volL) {
+                inputs.volL.value = Math.round(volumeToPercent(entry.volL));
+            }
+            if (inputs.volR) {
+                inputs.volR.value = Math.round(volumeToPercent(entry.volR));
+            }
+            if (inputs.basefreq) {
+                inputs.basefreq.value = Number(entry.basefreq || 0).toFixed(1);
+            }
+            if (inputs.beatfreq) {
+                inputs.beatfreq.value = Number(entry.beatfreq || 0).toFixed(1);
+            }
+        });
+    }
+
+    #setEntryStartTime(voice, entryIndex, targetTime) {
+        if (entryIndex <= 0) return;
+        const { starts } = this.#calculateEntryStarts(voice);
+        const prevStart = starts[entryIndex - 1] ?? 0;
+        const currentStart = starts[entryIndex] ?? prevStart;
+        const currentDuration = Number(voice.entries[entryIndex]?.duration || MIN_ENTRY_DURATION);
+        const isLast = entryIndex === (voice.entries?.length || 0) - 1;
+        const nextStart = entryIndex + 1 < starts.length ? starts[entryIndex + 1] : currentStart + currentDuration;
+        const maxAllowed = isLast ? Number.POSITIVE_INFINITY : nextStart - MIN_ENTRY_DURATION;
+        const clamped = clampValue(targetTime, prevStart + MIN_ENTRY_DURATION, maxAllowed);
+        const prevDuration = Math.max(MIN_ENTRY_DURATION, clamped - prevStart);
+        voice.entries[entryIndex - 1].duration = prevDuration;
+        if (isLast) {
+            const newStart = prevStart + prevDuration;
+            const endTime = newStart + currentDuration;
+            this.timelineLength = Math.max(this.timelineLength, endTime);
+            if (this.lengthInput) {
+                this.lengthInput.value = Math.round(this.timelineLength);
+            }
+        }
+    }
+
+    #highlightEntry(voiceIndex, entryIndex, { field } = {}) {
+        this.activeHighlight = { voiceIndex, entryIndex, field: field || null };
+        this.#applyHighlightState();
+    }
+
+    #clearHighlight() {
+        if (!this.activeHighlight) return;
+        const highlightVoice = this.voiceViews.get(this.activeHighlight.voiceIndex);
+        if (highlightVoice?.chart && highlightVoice.seriesMeta) {
+            highlightVoice.seriesMeta.forEach((_, seriesId) => {
+                highlightVoice.chart.dispatchAction({ type: 'downplay', seriesId });
+            });
+        }
+        this.voiceViews.forEach((view) => this.#updateHighlightedRowClass(view, null));
+        this.activeHighlight = null;
+        this.lastHighlightAction = null;
+    }
+
+    #applyHighlightState() {
+        if (!this.activeHighlight) {
+            this.#clearHighlight();
+            return;
+        }
+        const { voiceIndex, entryIndex, field } = this.activeHighlight;
+        const view = this.voiceViews.get(voiceIndex);
+        if (!view?.chart || !view.seriesMeta) return;
+
+        if (this.lastHighlightAction && this.lastHighlightAction.voiceIndex !== voiceIndex) {
+            const lastView = this.voiceViews.get(this.lastHighlightAction.voiceIndex);
+            if (lastView?.chart) {
+                lastView.chart.dispatchAction({
+                    type: 'downplay',
+                    seriesId: this.lastHighlightAction.seriesId,
+                    dataIndex: this.lastHighlightAction.dataIndex
+                });
+            }
+        }
+
+        view.seriesMeta.forEach((_, seriesId) => {
+            view.chart.dispatchAction({ type: 'downplay', seriesId });
+        });
+
+        let targetMeta = null;
+        if (field && view.seriesByField?.has(field)) {
+            targetMeta = view.seriesByField.get(field);
+        }
+        if (!targetMeta) {
+            targetMeta = [...view.seriesMeta.values()][0];
+        }
+        if (!targetMeta) return;
+
+        const targetSeriesId = this.#seriesId(view.index, targetMeta.config.key);
+        const pointIndex = targetMeta.points.findIndex((point) => !point.isEnd && point.entryIndex === entryIndex);
+        if (pointIndex >= 0) {
+            view.chart.dispatchAction({ type: 'highlight', seriesId: targetSeriesId, dataIndex: pointIndex });
+            this.lastHighlightAction = { voiceIndex: view.index, seriesId: targetSeriesId, dataIndex: pointIndex };
+        } else {
+            this.lastHighlightAction = null;
+        }
+
+        this.voiceViews.forEach((voiceView, idx) => {
+            this.#updateHighlightedRowClass(voiceView, idx === voiceIndex ? entryIndex : null);
+        });
+    }
+
+    #updateHighlightedRowClass(view, entryIndex) {
+        if (!view?.entryRows) return;
+        view.entryRows.forEach((entryView) => {
+            if (!entryView?.row) return;
+            if (entryIndex !== null && entryIndex === entryView.entryIndex) {
+                entryView.row.classList.add('is-highlighted');
+            } else {
+                entryView.row.classList.remove('is-highlighted');
+            }
+        });
+    }
+
+    #animateDetails(details, content) {
+        if (!content) return;
+        const startHeight = content.getBoundingClientRect().height;
+        const targetHeight = details.open ? content.scrollHeight : 0;
+        if (startHeight === targetHeight) {
+            content.style.height = details.open ? 'auto' : '0px';
+            return;
+        }
+        content.style.height = `${startHeight}px`;
+        requestAnimationFrame(() => {
+            content.style.height = `${targetHeight}px`;
+        });
+        const onTransitionEnd = () => {
+            content.style.height = details.open ? 'auto' : '0px';
+            content.removeEventListener('transitionend', onTransitionEnd);
+        };
+        content.addEventListener('transitionend', onTransitionEnd);
     }
 
     #connectCharts() {
@@ -798,10 +1554,17 @@ export class ScheduleEditor {
     #disposeCharts() {
         this.charts.forEach((chart) => chart?.dispose?.());
         this.charts.clear();
+        this.voiceViews.forEach((view) => {
+            view.chart = null;
+            view.interactionHandlers = null;
+        });
     }
 
     #resizeCharts() {
-        this.charts.forEach((chart) => chart?.resize?.());
+        this.voiceViews.forEach((view) => {
+            view.chart?.resize?.();
+            this.#refreshSeriesPixels(view);
+        });
     }
 }
 
