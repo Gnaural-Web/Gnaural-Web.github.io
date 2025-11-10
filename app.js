@@ -7,6 +7,7 @@ const RENDER_CONFIG = {
     chunkMinutes: 1
 };
 const QUICK_SEEK_BUFFER_SECONDS = 15;
+const ISO_ENVELOPE_STEP = 0.01; // matches desktop envelope ramp for isochronic pulses
 const SOUND_LIBRARY = [
     { label: 'Birds', file: 'sounds/birds.ogg', icon: 'icons/birds.svg' },
     { label: 'Boat', file: 'sounds/boat.ogg', icon: 'icons/boat.svg' },
@@ -433,6 +434,11 @@ class GnauralEngine {
         const chunkLength = left.length;
         const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
         let progress = progressStart;
+        if (typeof state.isoPhase !== 'number') state.isoPhase = 0;
+        if (typeof state.isoPulseCounter !== 'number') state.isoPulseCounter = 0;
+        if (typeof state.isoPulseOn !== 'boolean') state.isoPulseOn = false;
+        if (typeof state.isoEnvelope !== 'number') state.isoEnvelope = 1;
+
         for (let i = 0; i < sampleCount; i += 1) {
             const clamped = clamp(progress, 0, 1);
             const base = entry.baseStart + entry.baseSpread * clamped;
@@ -440,35 +446,37 @@ class GnauralEngine {
             const beatFreq = Math.max(0.0001, beatHalf * 2);
             const delta = TWO_PI * Math.max(0, base) / this.sampleRate;
 
-            // initialize state fields if missing
-            if (typeof state.isoPhase !== 'number') state.isoPhase = 0;
-            if (typeof state.isoPulseCounter !== 'number') state.isoPulseCounter = 0;
-            if (typeof state.isoPulseOn !== 'boolean') state.isoPulseOn = false;
-
-            // samples per half-pulse
             const halfPulseSamples = Math.max(1, Math.floor(this.sampleRate / (2 * beatFreq)));
             if (state.isoPulseCounter <= 0) {
                 state.isoPulseOn = !state.isoPulseOn;
                 state.isoPulseCounter = halfPulseSamples;
+                state.isoEnvelope = 0;
             }
 
-            // advance phase and produce sample (mono handling later)
             state.isoPhase = (state.isoPhase + delta) % TWO_PI;
-            const sampleValue = state.isoPulseOn ? Math.sin(state.isoPhase) : 0;
+            const tone = Math.sin(state.isoPhase);
+            const envelope = state.isoEnvelope <= 0 ? 0 : Math.min(1, state.isoEnvelope);
+            const leftGain = state.isoPulseOn ? 1 - envelope : envelope;
 
             const volL = entry.volLStart + entry.volLSpread * clamped;
             const volR = entry.volRStart + entry.volRSpread * clamped;
             const sampleIndex = startSample + i;
             if (sampleIndex >= chunkLength) break;
+
+            const sampleLeft = tone * leftGain;
+            const sampleRight = sampleLeft;
+
             if (mono) {
+                const monoSample = (sampleLeft + sampleRight) * 0.5;
                 const gain = 0.5 * (volL + volR);
-                left[sampleIndex] += sampleValue * gain;
-                right[sampleIndex] += sampleValue * gain;
+                left[sampleIndex] += monoSample * gain;
+                right[sampleIndex] += monoSample * gain;
             } else {
-                left[sampleIndex] += sampleValue * volL;
-                right[sampleIndex] += sampleValue * volR;
+                left[sampleIndex] += sampleLeft * volL;
+                right[sampleIndex] += sampleRight * volR;
             }
 
+            state.isoEnvelope = Math.min(1, state.isoEnvelope + ISO_ENVELOPE_STEP);
             state.isoPulseCounter -= 1;
             progress += progressDelta;
         }
@@ -479,6 +487,11 @@ class GnauralEngine {
         const chunkLength = left.length;
         const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
         let progress = progressStart;
+        if (typeof state.isoPhase !== 'number') state.isoPhase = 0;
+        if (typeof state.isoPulseCounter !== 'number') state.isoPulseCounter = 0;
+        if (typeof state.isoPulseOn !== 'boolean') state.isoPulseOn = false;
+        if (typeof state.isoEnvelope !== 'number') state.isoEnvelope = 1;
+
         for (let i = 0; i < sampleCount; i += 1) {
             const clamped = clamp(progress, 0, 1);
             const base = entry.baseStart + entry.baseSpread * clamped;
@@ -486,40 +499,36 @@ class GnauralEngine {
             const beatFreq = Math.max(0.0001, beatHalf * 2);
             const delta = TWO_PI * Math.max(0, base) / this.sampleRate;
 
-            if (typeof state.isoPhase !== 'number') state.isoPhase = 0;
-            if (typeof state.isoPulseCounter !== 'number') state.isoPulseCounter = 0;
-            if (typeof state.isoPulseOn !== 'boolean') state.isoPulseOn = false;
-            if (typeof state.isoSide !== 'number') state.isoSide = 0; // 0 => left, 1 => right
-
             const halfPulseSamples = Math.max(1, Math.floor(this.sampleRate / (2 * beatFreq)));
             if (state.isoPulseCounter <= 0) {
                 state.isoPulseOn = !state.isoPulseOn;
                 state.isoPulseCounter = halfPulseSamples;
-                // on each toggle when pulse turns on, flip side
-                if (state.isoPulseOn) state.isoSide = 1 - state.isoSide;
+                state.isoEnvelope = 0;
             }
 
             state.isoPhase = (state.isoPhase + delta) % TWO_PI;
-            const sampleValue = state.isoPulseOn ? Math.sin(state.isoPhase) : 0;
+            const tone = Math.sin(state.isoPhase);
+            const envelope = state.isoEnvelope <= 0 ? 0 : Math.min(1, state.isoEnvelope);
+            const leftGain = state.isoPulseOn ? 1 - envelope : envelope;
+            const rightGain = state.isoPulseOn ? envelope : 1 - envelope;
 
             const volL = entry.volLStart + entry.volLSpread * clamped;
             const volR = entry.volRStart + entry.volRSpread * clamped;
             const sampleIndex = startSample + i;
             if (sampleIndex >= chunkLength) break;
             if (mono) {
+                const sampleLeft = tone * leftGain;
+                const sampleRight = tone * rightGain;
+                const monoSample = (sampleLeft + sampleRight) * 0.5;
                 const gain = 0.5 * (volL + volR);
-                left[sampleIndex] += sampleValue * gain;
-                right[sampleIndex] += sampleValue * gain;
+                left[sampleIndex] += monoSample * gain;
+                right[sampleIndex] += monoSample * gain;
             } else {
-                if (state.isoSide === 0) {
-                    left[sampleIndex] += sampleValue * volL;
-                    right[sampleIndex] += 0 * volR;
-                } else {
-                    left[sampleIndex] += 0 * volL;
-                    right[sampleIndex] += sampleValue * volR;
-                }
+                left[sampleIndex] += tone * leftGain * volL;
+                right[sampleIndex] += tone * rightGain * volR;
             }
 
+            state.isoEnvelope = Math.min(1, state.isoEnvelope + ISO_ENVELOPE_STEP);
             state.isoPulseCounter -= 1;
             progress += progressDelta;
         }
