@@ -180,7 +180,7 @@ class GnauralEngine {
             const el = node.querySelector(selector);
             return el ? el.textContent.trim() : fallback;
         };
-        const type = toInt(text('type'), 0);
+        let type = toInt(text('type'), 0);
         const mute = text('voice_mute', '0') === '1';
         const mono = text('voice_mono', '0') === '1';
         const description = text('description', `Voice ${index + 1}`);
@@ -385,9 +385,15 @@ class GnauralEngine {
                 this.#mixSampleVoice(voice, entry, startSample, sampleCount, progressStart, progressEnd, left, right, state);
                 break;
             case 3:
-                this.#mixWhiteNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                this.#mixIsoPulse(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
                 break;
             case 4:
+                this.#mixIsoPulseAlt(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                break;
+            case 5:
+                this.#mixWhiteNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
+                break;
+            case 6:
                 this.#mixBrownNoise(entry, voice.mono, startSample, sampleCount, progressStart, progressEnd, left, right, state);
                 break;
             default:
@@ -417,6 +423,104 @@ class GnauralEngine {
             if (sampleIndex >= chunkLength) break;
             left[sampleIndex] += Math.sin(state.phaseL) * gainL;
             right[sampleIndex] += Math.sin(state.phaseR) * gainR;
+            progress += progressDelta;
+        }
+    }
+
+    #mixIsoPulse(entry, mono, startSample, sampleCount, progressStart, progressEnd, left, right, state) {
+        // Isochronic pulse: tone at base frequency is turned on/off at beat frequency.
+        // Implemented as alternating half-period pulses (on/off), with continuity preserved in state.
+        const chunkLength = left.length;
+        const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
+        let progress = progressStart;
+        for (let i = 0; i < sampleCount; i += 1) {
+            const clamped = clamp(progress, 0, 1);
+            const base = entry.baseStart + entry.baseSpread * clamped;
+            const beatHalf = entry.beatHalfStart + entry.beatHalfSpread * clamped;
+            const beatFreq = Math.max(0.0001, beatHalf * 2);
+            const delta = TWO_PI * Math.max(0, base) / this.sampleRate;
+
+            // initialize state fields if missing
+            if (typeof state.isoPhase !== 'number') state.isoPhase = 0;
+            if (typeof state.isoPulseCounter !== 'number') state.isoPulseCounter = 0;
+            if (typeof state.isoPulseOn !== 'boolean') state.isoPulseOn = false;
+
+            // samples per half-pulse
+            const halfPulseSamples = Math.max(1, Math.floor(this.sampleRate / (2 * beatFreq)));
+            if (state.isoPulseCounter <= 0) {
+                state.isoPulseOn = !state.isoPulseOn;
+                state.isoPulseCounter = halfPulseSamples;
+            }
+
+            // advance phase and produce sample (mono handling later)
+            state.isoPhase = (state.isoPhase + delta) % TWO_PI;
+            const sampleValue = state.isoPulseOn ? Math.sin(state.isoPhase) : 0;
+
+            const volL = entry.volLStart + entry.volLSpread * clamped;
+            const volR = entry.volRStart + entry.volRSpread * clamped;
+            const sampleIndex = startSample + i;
+            if (sampleIndex >= chunkLength) break;
+            if (mono) {
+                const gain = 0.5 * (volL + volR);
+                left[sampleIndex] += sampleValue * gain;
+                right[sampleIndex] += sampleValue * gain;
+            } else {
+                left[sampleIndex] += sampleValue * volL;
+                right[sampleIndex] += sampleValue * volR;
+            }
+
+            state.isoPulseCounter -= 1;
+            progress += progressDelta;
+        }
+    }
+
+    #mixIsoPulseAlt(entry, mono, startSample, sampleCount, progressStart, progressEnd, left, right, state) {
+        // Alternating isochronic: pulses alternate between left and right channels.
+        const chunkLength = left.length;
+        const progressDelta = sampleCount > 1 ? (progressEnd - progressStart) / (sampleCount - 1) : 0;
+        let progress = progressStart;
+        for (let i = 0; i < sampleCount; i += 1) {
+            const clamped = clamp(progress, 0, 1);
+            const base = entry.baseStart + entry.baseSpread * clamped;
+            const beatHalf = entry.beatHalfStart + entry.beatHalfSpread * clamped;
+            const beatFreq = Math.max(0.0001, beatHalf * 2);
+            const delta = TWO_PI * Math.max(0, base) / this.sampleRate;
+
+            if (typeof state.isoPhase !== 'number') state.isoPhase = 0;
+            if (typeof state.isoPulseCounter !== 'number') state.isoPulseCounter = 0;
+            if (typeof state.isoPulseOn !== 'boolean') state.isoPulseOn = false;
+            if (typeof state.isoSide !== 'number') state.isoSide = 0; // 0 => left, 1 => right
+
+            const halfPulseSamples = Math.max(1, Math.floor(this.sampleRate / (2 * beatFreq)));
+            if (state.isoPulseCounter <= 0) {
+                state.isoPulseOn = !state.isoPulseOn;
+                state.isoPulseCounter = halfPulseSamples;
+                // on each toggle when pulse turns on, flip side
+                if (state.isoPulseOn) state.isoSide = 1 - state.isoSide;
+            }
+
+            state.isoPhase = (state.isoPhase + delta) % TWO_PI;
+            const sampleValue = state.isoPulseOn ? Math.sin(state.isoPhase) : 0;
+
+            const volL = entry.volLStart + entry.volLSpread * clamped;
+            const volR = entry.volRStart + entry.volRSpread * clamped;
+            const sampleIndex = startSample + i;
+            if (sampleIndex >= chunkLength) break;
+            if (mono) {
+                const gain = 0.5 * (volL + volR);
+                left[sampleIndex] += sampleValue * gain;
+                right[sampleIndex] += sampleValue * gain;
+            } else {
+                if (state.isoSide === 0) {
+                    left[sampleIndex] += sampleValue * volL;
+                    right[sampleIndex] += 0 * volR;
+                } else {
+                    left[sampleIndex] += 0 * volL;
+                    right[sampleIndex] += sampleValue * volR;
+                }
+            }
+
+            state.isoPulseCounter -= 1;
             progress += progressDelta;
         }
     }
@@ -574,7 +678,9 @@ class ScheduleStream {
             phaseL: 0,
             phaseR: 0,
             noise: voice.type === 1 ? new PinkNoiseGenerator(seedBase + index * 7919) : null,
-            white: voice.type === 3 ? new WhiteNoiseGenerator(seedBase + index * 3571) : null,
+            // white/brown moved to higher type values: white=5, brown=6
+            white: voice.type === 5 ? new WhiteNoiseGenerator(seedBase + index * 3571) : null,
+            brown: voice.type === 6 ? new BrownNoiseGenerator(seedBase + index * 2713) : null,
             samplePosition: voice.type === 2 ? 0 : 0
         }));
     }

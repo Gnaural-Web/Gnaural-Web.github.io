@@ -15,6 +15,9 @@ const MIN_ENTRY_DURATION = 1;
 const ICONS = {
     binaural: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4a5 5 0 0 0-5 5v6a4 4 0 0 0 4 4h1a1 1 0 0 0 1-1V9a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v9a1 1 0 0 0 1 1h1a4 4 0 0 0 4-4V9a5 5 0 0 0-5-5H7z"/></svg>',
     noisePink: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 18c2.5-4 5-6 8-6s5.5 2 8 6l-1.6 1.2C16.3 16 14.4 14.8 12 14.8c-2.4 0-4.3 1.2-6.4 4.4z"/><path fill="currentColor" opacity="0.5" d="M4 6c2.5 4 5 6 8 6s5.5-2 8-6l-1.6-1.2C16.3 8 14.4 9.2 12 9.2c-2.4 0-4.3-1.2-6.4-4.4z"/></svg>',
+    noisePink: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#f472b6" d="M4 18c2.5-4 5-6 8-6s5.5 2 8 6l-1.6 1.2C16.3 16 14.4 14.8 12 14.8c-2.4 0-4.3 1.2-6.4 4.4z"/><path fill="#fbcfe8" d="M4 6c2.5 4 5 6 8 6s5.5-2 8-6l-1.6-1.2C16.3 8 14.4 9.2 12 9.2c-2.4 0-4.3-1.2-6.4-4.4z"/></svg>',
+    isoPulse: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2" fill="#8fcbff"/><path d="M4 12h2l1-4 2 8 1-4h2" stroke="#042a52" stroke-width="1" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    isoPulseAlt: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2" fill="#c084fc"/><path d="M4 12h3l1-4h2l1 4h3" stroke="#2b0b3a" stroke-width="1" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     noiseWhite: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h2l2 6 2-6h2l2 6 2-6h2l-3 16h-2l-2-6-2 6H8z"/></svg>',
     noiseBrown: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#c08457" d="M4 18c2.4-3.8 4.8-5.7 8-5.7s5.6 1.9 8 5.7l-2 1.4c-1.8-2.8-3.4-3.9-6-3.9s-4.3 1.2-6 3.9z"/><path fill="#8b5e34" d="M4 10c2.4 3.8 4.8 5.7 8 5.7s5.6-1.9 8-5.7l-2-1.4c-1.8 2.8-3.4 3.9-6 3.9s-4.3-1.2-6-3.9z"/><path fill="#5f3b1f" d="M4 4c2.4 3.2 4.8 4.8 8 4.8s5.6-1.6 8-4.8L18 3c-1.8 2-3.4 3-6 3s-4.3-1-6-3z"/></svg>',
     sample: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm8 1.5V9h3.5z"/></svg>',
@@ -77,7 +80,7 @@ const FIELD_CONFIGS = {
         axisGroup: 'base',
         color: '#8fcbff',
         symbol: 'circle',
-        supportedTypes: new Set([0]),
+        supportedTypes: new Set([0, 3, 4]),
         min: 20,
         max: 20000,
         toChart: (value) => value,
@@ -90,7 +93,7 @@ const FIELD_CONFIGS = {
         axisGroup: 'beat',
         color: '#c084fc',
         symbol: 'diamond',
-        supportedTypes: new Set([0]),
+        supportedTypes: new Set([0, 3, 4]),
         min: 0,
         max: Number.POSITIVE_INFINITY,
         toChart: (value) => value,
@@ -103,7 +106,7 @@ const FIELD_CONFIGS = {
         axisGroup: 'volume',
         color: '#34d399',
         symbol: 'rect',
-        supportedTypes: new Set([0, 1, 2, 3, 4]),
+        supportedTypes: new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
         min: 0,
         max: 100,
         toChart: (value) => volumeToPercent(value),
@@ -117,7 +120,7 @@ const FIELD_CONFIGS = {
         axisGroup: 'volume',
         color: '#f472b6',
         symbol: 'triangle',
-        supportedTypes: new Set([0, 1, 2, 3, 4]),
+        supportedTypes: new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
         min: 0,
         max: 100,
         toChart: (value) => volumeToPercent(value),
@@ -130,12 +133,12 @@ const FIELD_CONFIGS = {
 const getFieldConfig = (field) => FIELD_CONFIGS[field];
 
 const ensureEntries = (voice) => {
-    const isBinaural = Number(voice.type) === 0;
+    const isBinaural = [0, 3, 4].includes(Number(voice.type));
     const defaultBase = isBinaural ? 220 : 0;
     const defaultBeat = isBinaural ? 4 : 0;
     if (!voice.entries || !voice.entries.length) {
         voice.entries = [
-            { time: 0, basefreq: defaultBase, beatfreq: defaultBeat, volL: 0.7, volR: 0.7 }
+            { time: 0, basefreq: defaultBase, beatfreq: defaultBeat, volL: 0.5, volR: 0.5 }
         ];
     }
     const normalized = [];
@@ -491,7 +494,7 @@ export class ScheduleEditor {
         row.appendChild(volRLabel);
         entryInputs.volR = volRInput;
 
-        if (Number(voice.type) === 0) {
+        if ([0, 3, 4].includes(Number(voice.type))) {
             const baseLabel = document.createElement('label');
             baseLabel.textContent = 'Base Frequency (Hz)';
             const baseInput = document.createElement('input');
@@ -699,11 +702,16 @@ export class ScheduleEditor {
     }
 
     #buildTypeOptions(currentVoice) {
+        // Updated type mapping: keep binaural=0, pink=1, sample=2.
+        // Isochronic pulse voices are exposed as types 7 and 8.
+        // White and Brown noise moved to higher values to avoid collisions: white=9, brown=10.
         const options = [
             { type: 0, label: 'Binaural Beat (Generated)', icon: this.#iconSpecFromSvg(ICONS.binaural) },
-            { type: 4, label: 'Brown Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseBrown) },
+            { type: 3, label: 'Isochronic Pulse (Generated)', icon: this.#iconSpecFromSvg(ICONS.isoPulse) },
+            { type: 4, label: 'Alternating Isochronic Pulse (Generated)', icon: this.#iconSpecFromSvg(ICONS.isoPulseAlt) },
             { type: 1, label: 'Pink Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noisePink) },
-            { type: 3, label: 'White Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseWhite) }
+            { type: 5, label: 'White Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseWhite) },
+            { type: 6, label: 'Brown Noise (Generated)', icon: this.#iconSpecFromSvg(ICONS.noiseBrown) }
         ];
         const recorded = (this.soundLibrary || [])
             .map((item) => this.#buildRecordedOption(item.file, item.label))
@@ -930,8 +938,12 @@ export class ScheduleEditor {
             case 1:
                 return 'Pink Noise';
             case 3:
-                return 'White Noise';
+                return 'Isochronic Pulse';
             case 4:
+                return 'Alternating Isochronic Pulse';
+            case 5:
+                return 'White Noise';
+            case 6:
                 return 'Brown Noise';
             case 2: {
                 if (!voice?.file) return 'Recorded Sound';
