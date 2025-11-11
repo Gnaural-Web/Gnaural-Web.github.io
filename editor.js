@@ -23,7 +23,8 @@ const ICONS = {
     sample: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 4h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm8 1.5V9h3.5z"/></svg>',
     remove: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h10l-1 15H8z"/><path fill="currentColor" d="M5 5h14v2H5z"/><path fill="currentColor" d="M9 2h6v2H9z"/></svg>',
     add: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>',
-    preview: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'
+    preview: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>'
 };
 
 const formatSeconds = (seconds) => {
@@ -200,10 +201,11 @@ export class ScheduleEditor {
         this.downloadButton = document.getElementById('editorDownload');
         this.voiceList = document.getElementById('editorVoiceList');
         this.charts = new Map();
-    this.voiceViews = new Map();
-    this.activeHighlight = null;
-    this.dragState = null;
-    this.lastHighlightAction = null;
+        this.voiceViews = new Map();
+        this.activeHighlight = null;
+        this.dragState = null;
+        this.lastHighlightAction = null;
+        this.previewingIndex = null;
         this.chartGroupId = `voice-editor-${Date.now()}`;
         this.currentData = null;
         this.timelineLength = 600;
@@ -218,6 +220,10 @@ export class ScheduleEditor {
         this.mode = options.mode || 'edit';
         this.currentData = deepClone(data || {});
         ensureEntriesStructure(this.currentData);
+        const activePreview = Number.isInteger(this.app?.state?.previewSource?.voiceIndex)
+            ? this.app.state.previewSource.voiceIndex
+            : null;
+        this.previewingIndex = activePreview;
         const longestVoice = this.#calculateLongestVoice();
         const providedLength = Number(this.currentData.totalDurationSeconds) || 0;
         this.timelineLength = Math.max(
@@ -237,6 +243,10 @@ export class ScheduleEditor {
         this.modal.classList.remove('open');
         this.modal.setAttribute('aria-hidden', 'true');
         document.removeEventListener('click', this.boundDocumentHandler);
+        if (this.app?.stopVoicePreview) {
+            this.app.stopVoicePreview();
+        }
+        this.previewingIndex = null;
         this.#disposeCharts();
         this.currentData = null;
         this.timelineLength = 600;
@@ -245,6 +255,45 @@ export class ScheduleEditor {
         this.activeHighlight = null;
         this.dragState = null;
         this.lastHighlightAction = null;
+    }
+
+    handlePreviewStateChange({ voiceIndex = null, active = false } = {}) {
+        if (active && Number.isInteger(voiceIndex) && voiceIndex >= 0) {
+            this.#setPreviewing(voiceIndex);
+            return;
+        }
+        if (!active) {
+            if (!Number.isInteger(voiceIndex) || voiceIndex === this.previewingIndex) {
+                this.#setPreviewing(null);
+            }
+        }
+    }
+
+    #setPreviewing(index) {
+        const normalized = Number.isInteger(index) && index >= 0 ? index : null;
+        if (this.previewingIndex === normalized) {
+            this.#refreshPreviewButtons();
+            return;
+        }
+        this.previewingIndex = normalized;
+        this.#refreshPreviewButtons();
+    }
+
+    #refreshPreviewButtons() {
+        this.voiceViews.forEach((view) => this.#syncPreviewButton(view));
+    }
+
+    #syncPreviewButton(view) {
+        if (!view?.previewButton) return;
+        const isActive = this.previewingIndex === view.index;
+        const label = isActive
+            ? `${ICONS.stop}<span>Stop</span>`
+            : `${ICONS.preview}<span>Preview Voice</span>`;
+        if (view.previewButton.innerHTML !== label) {
+            view.previewButton.innerHTML = label;
+        }
+        view.previewButton.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        view.previewButton.classList.toggle('is-previewing', Boolean(isActive));
     }
 
     #bindEvents() {
@@ -295,6 +344,15 @@ export class ScheduleEditor {
         this.voiceList.innerHTML = '';
         this.voiceViews.clear();
         const voices = this.currentData.voices || [];
+        if (
+            Number.isInteger(this.previewingIndex) &&
+            (this.previewingIndex < 0 || this.previewingIndex >= voices.length)
+        ) {
+            if (this.app?.stopVoicePreview) {
+                this.app.stopVoicePreview();
+            }
+            this.previewingIndex = null;
+        }
         if (!voices.length) {
             const empty = document.createElement('div');
             empty.className = 'editor-empty-state';
@@ -303,6 +361,7 @@ export class ScheduleEditor {
             return;
         }
         const fragment = document.createDocumentFragment();
+        const chartViews = [];
         voices.forEach((voice, index) => {
             ensureEntries(voice);
             const view = this.#createVoiceCard(voice, index);
@@ -310,11 +369,18 @@ export class ScheduleEditor {
             this.voiceViews.set(index, view);
             fragment.appendChild(view.card);
             if (view.chartElement) {
-                this.#renderVoiceChart(view);
+                chartViews.push(view);
             }
         });
         this.voiceList.appendChild(fragment);
+        chartViews.forEach((view) => this.#renderVoiceChart(view));
         this.#connectCharts();
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => this.#resizeCharts());
+        } else {
+            setTimeout(() => this.#resizeCharts(), 50);
+        }
+        this.#refreshPreviewButtons();
     }
 
     #createVoiceCard(voice, index) {
@@ -328,7 +394,8 @@ export class ScheduleEditor {
             inputMap: new Map(),
             chart: null,
             dataset: null,
-            seriesMeta: new Map()
+            seriesMeta: new Map(),
+            previewButton: null
         };
         const { card } = view;
         card.className = 'voice-card';
@@ -399,16 +466,29 @@ export class ScheduleEditor {
         previewButton.innerHTML = `${ICONS.preview}<span>Preview Voice</span>`;
         previewButton.addEventListener('click', async () => {
             if (previewButton.disabled) return;
+            if (this.previewingIndex === index) {
+                if (this.app?.stopVoicePreview) {
+                    this.app.stopVoicePreview();
+                }
+                this.#setPreviewing(null);
+                return;
+            }
             previewButton.disabled = true;
+            this.#setPreviewing(index);
             try {
-                await this.#previewVoice(index);
+                const started = await this.#previewVoice(index);
+                if (!started) {
+                    this.#setPreviewing(null);
+                }
             } catch (error) {
-                console.error('Voice preview failed', error);
+                this.#setPreviewing(null);
             } finally {
                 previewButton.disabled = false;
             }
         });
         footer.appendChild(previewButton);
+        view.previewButton = previewButton;
+        this.#syncPreviewButton(view);
         const addPoint = document.createElement('button');
         addPoint.type = 'button';
         addPoint.className = 'secondary-button';
@@ -780,20 +860,22 @@ export class ScheduleEditor {
 
     #removeVoice(index) {
         if (!this.currentData?.voices) return;
+        if (this.previewingIndex !== null) {
+            if (this.app?.stopVoicePreview) {
+                this.app.stopVoicePreview();
+            }
+            this.previewingIndex = null;
+        }
         this.currentData.voices.splice(index, 1);
         this.#renderVoices();
     }
 
     async #previewVoice(index) {
-        if (!this.currentData?.voices?.[index] || !this.app?.previewVoice) return;
+        if (!this.currentData?.voices?.[index] || !this.app?.previewVoice) return false;
         this.#syncMetadataFromInputs();
         const exportData = this.#buildExportData();
-        if (!exportData) return;
-        try {
-            await this.app.previewVoice(index, exportData);
-        } catch (error) {
-            console.error('Preview playback failed', error);
-        }
+        if (!exportData) return false;
+        return this.app.previewVoice(index, exportData);
     }
 
     #addEntry(index) {
@@ -1657,6 +1739,7 @@ export class ScheduleEditor {
             }
         }
         this.#updateVoiceChart(view, { rebuild });
+        this.#syncPreviewButton(view);
         if (!keepInputs) {
             this.#refreshEntryInputs(view);
         }

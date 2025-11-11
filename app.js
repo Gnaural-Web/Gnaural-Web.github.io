@@ -1223,6 +1223,7 @@ class GnauralApp {
             // ignore
         }
         this.state.previewSource = null;
+        this.editor?.handlePreviewStateChange({ voiceIndex: preview.voiceIndex, active: false });
     }
 
     #handlePreviewEnded() {
@@ -1235,6 +1236,7 @@ class GnauralApp {
             // ignore
         }
         this.state.previewSource = null;
+        this.editor?.handlePreviewStateChange({ voiceIndex: preview.voiceIndex, active: false });
         if (!this.state.isPlaying) {
             this.#setStatus(label ? `Preview finished: ${label}` : 'Preview finished');
         }
@@ -1738,11 +1740,13 @@ class GnauralApp {
         const voice = exportData?.voices?.[voiceIndex];
         if (!voice) {
             this.#setStatus('Preview unavailable (voice missing)');
-            return;
+            this.editor?.handlePreviewStateChange({ voiceIndex, active: false });
+            return false;
         }
         if (Number(voice.type) === 2 && !voice.file) {
             this.#setStatus('Preview unavailable (sample missing)');
-            return;
+            this.editor?.handlePreviewStateChange({ voiceIndex, active: false });
+            return false;
         }
         const label = voice.description?.trim() || `Voice ${voiceIndex + 1}`;
         try {
@@ -1780,17 +1784,20 @@ class GnauralApp {
             const totalSeconds = schedule.totalDurationSeconds * schedule.loops;
             if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
                 this.#setStatus('Preview unavailable (empty voice)');
-                return;
+                this.editor?.handlePreviewStateChange({ voiceIndex, active: false });
+                return false;
             }
             const segment = this.engine.renderRange(schedule, 0, totalSeconds, stream.voiceStates);
             if (!segment) {
                 this.#setStatus('Preview unavailable (render error)');
-                return;
+                this.editor?.handlePreviewStateChange({ voiceIndex, active: false });
+                return false;
             }
             const ctx = this.state.audioCtx;
             if (!ctx || !this.state.masterGain) {
                 this.#setStatus('Preview unavailable (audio engine)');
-                return;
+                this.editor?.handlePreviewStateChange({ voiceIndex, active: false });
+                return false;
             }
             const buffer = ctx.createBuffer(2, segment.left.length, this.engine.sampleRate);
             buffer.copyToChannel(segment.left, 0, 0);
@@ -1800,13 +1807,26 @@ class GnauralApp {
             source.connect(this.state.masterGain);
             source.onended = () => this.#handlePreviewEnded();
             source.start();
-            this.state.previewSource = { source, label };
+            this.state.previewSource = { source, label, voiceIndex };
+            this.editor?.handlePreviewStateChange({ voiceIndex, active: true });
             this.#setStatus(`Previewing ${label}`);
+            return true;
         } catch (error) {
             console.error('Voice preview failed', error);
             this.#stopPreview();
+            this.editor?.handlePreviewStateChange({ voiceIndex, active: false });
             this.#setStatus('Preview failed');
+            return false;
         }
+    }
+
+    stopVoicePreview() {
+        if (!this.state.previewSource) return false;
+        this.#stopPreview();
+        if (!this.state.isPlaying) {
+            this.#setStatus('Preview stopped');
+        }
+        return true;
     }
 
     async applyEditedSchedule(data) {
