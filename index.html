@@ -35,6 +35,7 @@
                         <button data-action="edit">Edit Gnaural File</button>
                         <button data-action="standard">Open Standard Files</button>
                         <button data-action="import">Import File from Disk</button>
+                        <button data-action="install" id="installMenuButton" class="hidden">Install Offline</button>
                     </div>
                 </div>
                 <input type="file" id="fileInput" accept=".gnaural,.xml" hidden>
@@ -190,6 +191,36 @@
             </div>
             <div class="modal-content" id="standardFilesList">
                 <p>Loading standard files…</p>
+            </div>
+        </div>
+    </div>
+    <div class="modal" id="installModal" aria-hidden="true">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>Install Offline</h2>
+                <button class="modal-close" data-close>&times;</button>
+            </div>
+            <div class="modal-content install-content">
+                <p>Install Gnaural Web Studio to your home screen for a full-screen experience that works without a network connection.</p>
+                <div class="install-instructions">
+                    <div class="install-card">
+                        <h3>Android</h3>
+                        <ol>
+                            <li>Open the browser menu <span aria-hidden="true">⋮</span>.</li>
+                            <li>Choose <strong>Add to Home screen</strong> or <strong>Install app</strong>.</li>
+                            <li>Confirm when prompted.</li>
+                        </ol>
+                    </div>
+                    <div class="install-card">
+                        <h3>iPhone &amp; iPad</h3>
+                        <ol>
+                            <li>Tap the <strong>Share</strong> icon — the square with an upward arrow.</li>
+                            <li>Select <strong>Add to Home Screen</strong>.</li>
+                            <li>Tap <strong>Add</strong> to confirm.</li>
+                        </ol>
+                    </div>
+                </div>
+                <p class="install-note">Once added, launch Gnaural Web Studio from your home screen to enjoy offline playback and a dedicated window.</p>
             </div>
         </div>
     </div>

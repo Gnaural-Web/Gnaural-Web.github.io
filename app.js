@@ -837,7 +837,9 @@ class GnauralApp {
             bufferMonitorId: null,
             nextMinuteRenderMark: 60,
             timelineScrubbing: false,
-            previewSource: null
+            previewSource: null,
+            installPromptEvent: null,
+            installCapability: 'hidden'
         };
         this.timelinePointerUpHandler = () => {
             this.state.timelineScrubbing = false;
@@ -853,6 +855,7 @@ class GnauralApp {
         this.#setVolume(this.ui.volumeSlider.value);
         this.#setBalance(this.ui.balanceSlider.value);
         this.#initCookieControls();
+        this.#setupInstallPromptHandling();
         this.#loadStandardFilesConfig();
         if (!this.#maybeRestoreSession()) {
             this.#loadDefaultSchedule();
@@ -884,7 +887,8 @@ class GnauralApp {
             standardFilesList: document.getElementById('standardFilesList'),
             cookieBanner: document.getElementById('cookieBanner'),
             cookieAccept: document.getElementById('cookieAccept'),
-            cookieDecline: document.getElementById('cookieDecline')
+            cookieDecline: document.getElementById('cookieDecline'),
+            installMenuButton: document.getElementById('installMenuButton')
         };
         refs.playButton.addEventListener('click', () => this.#togglePlay());
         refs.volumeSlider.addEventListener('input', (event) => this.#setVolume(event.target.value));
@@ -1446,6 +1450,9 @@ class GnauralApp {
             case 'import':
                 this.ui.fileInput?.click();
                 break;
+            case 'install':
+                this.#handleInstallAction();
+                break;
             case 'new':
                 this.editor?.open(this.createBlankScheduleData(), { mode: 'new' });
                 break;
@@ -1458,6 +1465,151 @@ class GnauralApp {
             }
             default:
         }
+    }
+
+    #setupInstallPromptHandling() {
+        if (typeof window === 'undefined') return;
+        this.state.installCapability = this.#determineInstallCapability();
+        this.#updateInstallMenuVisibility();
+
+        window.addEventListener('beforeinstallprompt', (event) => {
+            event.preventDefault();
+            this.state.installPromptEvent = event;
+            if (this.#isStandaloneMode()) {
+                this.state.installCapability = 'hidden';
+            } else if (this.#isMobileExperience()) {
+                this.state.installCapability = 'prompt';
+            }
+            this.#updateInstallMenuVisibility();
+        });
+
+        window.addEventListener('appinstalled', () => {
+            this.state.installPromptEvent = null;
+            this.state.installCapability = 'hidden';
+            this.#updateInstallMenuVisibility();
+            this.#setStatus('Installed! Launch from your home screen for offline access.');
+        });
+
+        const displayModeMedia = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(display-mode: standalone)')
+            : null;
+        const displayModeHandler = (event) => {
+            if (event.matches) {
+                this.state.installCapability = 'hidden';
+            } else if (this.state.installCapability !== 'prompt') {
+                this.state.installCapability = this.#determineInstallCapability();
+            }
+            this.#updateInstallMenuVisibility();
+        };
+        if (displayModeMedia) {
+            if (typeof displayModeMedia.addEventListener === 'function') {
+                displayModeMedia.addEventListener('change', displayModeHandler);
+            } else if (typeof displayModeMedia.addListener === 'function') {
+                displayModeMedia.addListener(displayModeHandler);
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            if (this.state.installCapability === 'prompt') return;
+            const nextMode = this.#determineInstallCapability();
+            if (nextMode !== this.state.installCapability) {
+                this.state.installCapability = nextMode;
+                this.#updateInstallMenuVisibility();
+            }
+        });
+    }
+
+    #determineInstallCapability() {
+        if (!this.#isMobileExperience() || this.#isStandaloneMode()) {
+            return 'hidden';
+        }
+        if (this.#isiOSSafari()) {
+            return 'instructions';
+        }
+        return this.state.installPromptEvent ? 'prompt' : 'pending';
+    }
+
+    #isStandaloneMode() {
+        const standaloneMedia = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(display-mode: standalone)').matches
+            : false;
+        return standaloneMedia || window.navigator.standalone === true;
+    }
+
+    #isMobileExperience() {
+        const nav = window.navigator;
+        const ua = nav.userAgent || nav.vendor || '';
+        const mobileRegex = /Android|iPhone|iPad|iPod|Windows Phone|Mobi/i;
+        const coarsePointer = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(pointer: coarse)').matches
+            : false;
+        const narrowViewport = typeof window.matchMedia === 'function'
+            ? window.matchMedia('(max-width: 768px)').matches
+            : false;
+        return mobileRegex.test(ua) || coarsePointer || narrowViewport;
+    }
+
+    #isiOSSafari() {
+        const nav = window.navigator;
+        const ua = nav.userAgent || '';
+        const platform = nav.platform || '';
+        const isTouchMac = platform === 'MacIntel' && nav.maxTouchPoints > 1;
+        const isIOS = /iPad|iPhone|iPod/.test(ua) || isTouchMac;
+        if (!isIOS) return false;
+        if (this.#isStandaloneMode() || nav.standalone === true) return false;
+        const isSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|AlohaBrowser|GSA/.test(ua);
+        return isSafari;
+    }
+
+    #updateInstallMenuVisibility() {
+        const button = this.ui.installMenuButton;
+        if (!button) return;
+        const mode = this.state.installCapability;
+        const visible = mode === 'prompt' || mode === 'instructions';
+        button.classList.toggle('hidden', !visible);
+        button.disabled = !visible;
+        button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        if (visible && mode === 'instructions') {
+            button.textContent = 'Install Offline (How-To)';
+        } else if (visible) {
+            button.textContent = 'Install Offline';
+        }
+        button.dataset.installMode = visible ? mode : 'hidden';
+    }
+
+    #handleInstallAction() {
+        const capability = this.state.installCapability;
+        if (!this.#isMobileExperience()) {
+            this.#setStatus('Install is only available from a mobile browser.');
+            return;
+        }
+        if (capability === 'instructions' || this.#isiOSSafari()) {
+            this.state.installCapability = 'instructions';
+            this.#updateInstallMenuVisibility();
+            this.#openModal('installModal');
+            return;
+        }
+        if (capability === 'prompt' && this.state.installPromptEvent) {
+            const promptEvent = this.state.installPromptEvent;
+            this.state.installPromptEvent = null;
+            this.state.installCapability = 'pending';
+            this.#updateInstallMenuVisibility();
+            promptEvent.prompt();
+            promptEvent.userChoice
+                .then((choice) => {
+                    if (choice.outcome === 'accepted') {
+                        this.#setStatus('Install request sent — look for Gnaural Web Studio on your home screen.');
+                    } else {
+                        this.#setStatus('Install dismissed. You can install anytime from your browser menu.');
+                    }
+                })
+                .catch((error) => {
+                    console.error(error);
+                    this.#setStatus('Install prompt failed. Use your browser menu to add it manually.');
+                });
+            return;
+        }
+        this.#setStatus('Install prompt not ready yet. Try again after the page finishes loading.');
     }
 
     async #loadStandardFilesConfig() {
